@@ -1,0 +1,3 @@
+local _, MCA = ...
+
+MCA.Utils = {}

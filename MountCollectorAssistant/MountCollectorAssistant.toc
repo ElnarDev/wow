@@ -1,0 +1,14 @@
+## Interface: 120007
+## Title: Mount Collector Assistant
+## Notes: Mount tracking addon for collectors.
+## Author: Edulat & ChatGPT
+## Version: 0.1.0
+## SavedVariables: MCA_DB
+
+Core.lua
+Data.lua
+Utils.lua
+Pets.lua
+UI.lua
+
+Modules\Briggul.lua
