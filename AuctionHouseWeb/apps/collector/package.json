@@ -1,0 +1,1 @@
+{"name":"auction-house-collector","private":true,"type":"module","dependencies":{"pg":"8.16.3"}}

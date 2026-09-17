@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: auction_house
+      POSTGRES_USER: auction_house
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U auction_house -d auction_house']
+      interval: 5s
+      timeout: 3s
+      retries: 15
+  collector:
+    build: ./apps/collector
+    environment:
+      COLLECTOR_PORT: 3001
+      DATABASE_URL: postgresql://auction_house:${POSTGRES_PASSWORD}@postgres:5432/auction_house
+      BLIZZARD_CLIENT_ID: ${BLIZZARD_CLIENT_ID:-}
+      BLIZZARD_CLIENT_SECRET: ${BLIZZARD_CLIENT_SECRET:-}
+      WOW_REGION: us
+      DEFAULT_REALM_SLUG: area-52
+      COMPARISON_REALM_SLUGS: stormrage,illidan,tichondrius,sargeras,malganis
+      COLLECTION_INTERVAL_MINUTES: 10
+    ports: ['127.0.0.1:3501:3001']
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+  web:
+    build: ./apps/web
+    environment:
+      WATCHPACK_POLLING: 'true'
+    ports: ['127.0.0.1:3500:3000']
+    volumes:
+      - ./apps/web:/app
+    depends_on:
+      postgres: { condition: service_healthy }
+      collector: { condition: service_healthy }
+volumes:
+  postgres_data:

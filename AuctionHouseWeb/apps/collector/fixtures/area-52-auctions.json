@@ -1,0 +1,9 @@
+{
+  "source": "local-fixture",
+  "realm": "Area 52",
+  "auctions": [
+    { "itemId": 100001, "itemClassId": 4, "quantity": 1, "buyout": 124800 },
+    { "itemId": 100002, "itemClassId": 4, "quantity": 1, "buyout": 180200 },
+    { "itemId": 100003, "itemClassId": 2, "quantity": 1, "buyout": 90000 }
+  ]
+}
