@@ -28,8 +28,11 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
 );
 CREATE TABLE IF NOT EXISTS items (
   id BIGINT PRIMARY KEY, name TEXT NOT NULL, item_class_id INTEGER NOT NULL,
-  item_subclass_id INTEGER, inventory_type TEXT, metadata_fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  item_subclass_id INTEGER, inventory_type TEXT, item_level INTEGER, required_level INTEGER,
+  quality_type TEXT, quality_rank INTEGER, expansion_id INTEGER,
+  metadata_fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS items_armor_filters_idx ON items (item_class_id, expansion_id, quality_rank, item_level);
 CREATE TABLE IF NOT EXISTS price_snapshots (
   ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE,
   item_id BIGINT NOT NULL REFERENCES items(id), min_buyout_copper BIGINT NOT NULL,
@@ -46,6 +49,7 @@ CREATE TABLE IF NOT EXISTS auction_variants (
   bonus_list_ids INTEGER[] NOT NULL DEFAULT '{}',
   modifiers JSONB NOT NULL DEFAULT '[]',
   tertiary_stats INTEGER[] NOT NULL DEFAULT '{}',
+  effective_item_level INTEGER,
   UNIQUE (item_id, variant_key)
 );
 CREATE TABLE IF NOT EXISTS variant_price_snapshots (
@@ -58,6 +62,7 @@ CREATE TABLE IF NOT EXISTS variant_price_snapshots (
 );
 CREATE INDEX IF NOT EXISTS variant_price_snapshots_variant_run_idx ON variant_price_snapshots (variant_id, ingestion_run_id DESC);
 CREATE INDEX IF NOT EXISTS auction_variants_tertiary_stats_idx ON auction_variants USING GIN (tertiary_stats);
+CREATE INDEX IF NOT EXISTS auction_variants_effective_level_idx ON auction_variants (effective_item_level);
 CREATE TABLE IF NOT EXISTS variant_price_levels (
   ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE,
   variant_id BIGINT NOT NULL REFERENCES auction_variants(id),

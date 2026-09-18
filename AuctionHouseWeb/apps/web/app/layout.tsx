@@ -7,5 +7,8 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="es"><body>{children}</body></html>;
+  return <html lang="es"><head>
+    <script dangerouslySetInnerHTML={{ __html: 'window.whTooltips={colorLinks:false,iconizeLinks:true,renameLinks:false,hide:{droppedby:true,dropchance:true}};' }} />
+    <script async src="https://wow.zamimg.com/js/tooltips.js" />
+  </head><body>{children}</body></html>;
 }

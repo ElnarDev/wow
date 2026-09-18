@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 type Realm = { id: number; name: string; isDefault: boolean };
 type Modifier = { type: number; value: number };
-type ArmorItem = { id: number; name: string; subclassId: number | null; inventoryType: string | null; variantKey: string; tertiaryStats: number[]; minBuyoutCopper: number; quantity: number; listingCount: number; capturedAt: string };
-type Variant = { variantKey: string; context: number | null; bonusListIds: number[]; modifiers: Modifier[]; tertiaryStats: number[]; minBuyoutCopper: number; quantity: number; listingCount: number };
+type ArmorItem = { id: number; name: string; subclassId: number | null; inventoryType: string | null; itemLevel: number | null; effectiveItemLevel: number | null; qualityType: string | null; qualityRank: number | null; expansionId: number | null; variantKey: string; context: number | null; bonusListIds: number[]; modifiers: Modifier[]; tertiaryStats: number[]; minBuyoutCopper: number; quantity: number; listingCount: number; capturedAt: string };
+type Variant = { variantKey: string; context: number | null; bonusListIds: number[]; modifiers: Modifier[]; tertiaryStats: number[]; effectiveItemLevel: number | null; minBuyoutCopper: number; quantity: number; listingCount: number };
 type PriceLevel = { variantKey: string; unitPriceCopper: number; quantity: number; listingCount: number };
 type ItemDetail = { id: number; name: string; subclassId: number | null; inventoryType: string | null; capturedAt: string; realm: string; summary: { min_buyout_copper: number; quantity: number; listing_count: number }; variants: Variant[]; priceLevels: PriceLevel[] };
 type HistoryPoint = { capturedAt: string; minBuyoutCopper: number; quantity: number; listingCount: number };
@@ -14,12 +14,15 @@ type RealmPrice = { connectedRealmId: number; name: string; minBuyoutCopper: num
 type ComparisonData = { realms: RealmPrice[]; coverage: { monitored: number; total: number; targeted: number; targetMonitored: number } };
 type ArmorLeaf = { label: string; subclassIds: number[]; types?: string[]; kind?: 'special' | 'tertiary'; bonusStat?: number };
 type ArmorGroup = { label: string; subclassIds: number[]; leaves: ArmorLeaf[] };
-type SearchState = { query: string; group: string | null; leaf: string | null; bonusStat?: number; subclasses: number[]; inventoryTypes: string[]; sort: string; direction: 'asc' | 'desc' };
+type SearchState = { query: string; group: string | null; leaf: string | null; bonusStat?: number; subclasses: number[]; inventoryTypes: string[]; expansionId: number | null; minLevel: number | null; maxLevel: number | null; minQuality: number | null; maxQuality: number | null; sort: string; direction: 'asc' | 'desc' };
 
 const collectorUrl = 'http://localhost:3501';
 const pageSize = 50;
 const armorTypes: Record<number, string> = { 1: 'Cloth', 2: 'Leather', 3: 'Mail', 4: 'Plate', 5: 'Cosmetic', 6: 'Shields' };
 const statNames: Record<number, string> = { 61: 'Speed', 62: 'Leech', 63: 'Avoidance', 64: 'Indestructible' };
+const expansions = ['Classic', 'The Burning Crusade', 'Wrath of the Lich King', 'Cataclysm', 'Mists of Pandaria', 'Warlords of Draenor', 'Legion', 'Battle for Azeroth', 'Shadowlands', 'Dragonflight', 'The War Within', 'Midnight'];
+const qualities = ['Poor', 'Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Artifact', 'Heirloom'];
+const qualityColors: Record<string, string> = { POOR: '#9d9d9d', COMMON: '#ffffff', UNCOMMON: '#1eff00', RARE: '#0070dd', EPIC: '#a335ee', LEGENDARY: '#ff8000', ARTIFACT: '#e6cc80', HEIRLOOM: '#00ccff' };
 const standardLeaves: ArmorLeaf[] = [
   { label: 'Runecarving', subclassIds: [], kind: 'special' }, { label: 'Head', subclassIds: [], types: ['HEAD'] },
   { label: 'Shoulder', subclassIds: [], types: ['SHOULDER'] }, { label: 'Chest', subclassIds: [], types: ['CHEST', 'ROBE'] },
@@ -42,7 +45,7 @@ const armorGroups: ArmorGroup[] = [
   ] }, { label: 'Cosmetic', subclassIds: [5], leaves: [] },
 ];
 const categories = ['Weapons', 'Armor', 'Containers', 'Gems', 'Item Enhancements', 'Consumables', 'Glyphs', 'Trade Goods', 'Recipes', 'Profession Equipment', 'Housing', 'Battle Pets', 'Quest Items', 'Miscellaneous', 'WoW Token'];
-const initialSearch: SearchState = { query: '', group: null, leaf: null, subclasses: [], inventoryTypes: [], sort: 'name', direction: 'asc' };
+const initialSearch: SearchState = { query: '', group: null, leaf: null, subclasses: [], inventoryTypes: [], expansionId: null, minLevel: null, maxLevel: null, minQuality: null, maxQuality: null, sort: 'name', direction: 'asc' };
 
 function formatGold(copper: number) {
   const value = Number(copper); const gold = Math.floor(value / 10_000); const silver = Math.floor((value % 10_000) / 100); const rest = value % 100;
@@ -51,7 +54,22 @@ function formatGold(copper: number) {
 
 function variantLabel(variant: Variant, index: number) {
   const stats = variant.tertiaryStats.map((stat) => statNames[stat]).filter(Boolean);
-  return stats.length ? stats.join(' · ') : `Variant ${index + 1} · ${variant.bonusListIds.length} bonuses`;
+  const level = variant.effectiveItemLevel ? `Niv ${variant.effectiveItemLevel}` : `Variant ${index + 1}`;
+  return stats.length ? `${level} · ${stats.join(' · ')}` : `${level} · ${variant.bonusListIds.length} bonuses`;
+}
+
+function wowheadData(itemId: number, bonusListIds: number[], modifiers: Modifier[], itemLevel?: number | null) {
+  const playerLevel = modifiers.find((modifier) => modifier.type === 9)?.value;
+  return [`item=${itemId}`, bonusListIds.length ? `bonus=${bonusListIds.join(':')}` : '', playerLevel ? `lvl=${playerLevel}` : '', itemLevel ? `ilvl=${itemLevel}` : ''].filter(Boolean).join('&');
+}
+
+function wowheadHref(itemId: number, bonusListIds: number[], modifiers: Modifier[], itemLevel?: number | null) {
+  const parameters = new URLSearchParams();
+  if (bonusListIds.length) parameters.set('bonus', bonusListIds.join(':'));
+  const playerLevel = modifiers.find((modifier) => modifier.type === 9)?.value;
+  if (playerLevel) parameters.set('lvl', String(playerLevel));
+  if (itemLevel) parameters.set('ilvl', String(itemLevel));
+  return `https://www.wowhead.com/item=${itemId}${parameters.size ? `?${parameters}` : ''}`;
 }
 
 function PriceHistoryChart({ points }: { points: HistoryPoint[] }) {
@@ -65,6 +83,7 @@ export function AuctionDashboard() {
   const [realms, setRealms] = useState<Realm[]>([]); const [realmId, setRealmId] = useState<number | null>(null);
   const [items, setItems] = useState<ArmorItem[]>([]); const [query, setQuery] = useState('');
   const [activeRoot, setActiveRoot] = useState('Armor'); const [armorGroup, setArmorGroup] = useState<string | null>(null); const [armorLeaf, setArmorLeaf] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false); const [expansionId, setExpansionId] = useState<number | null>(null); const [minLevel, setMinLevel] = useState(''); const [maxLevel, setMaxLevel] = useState(''); const [minQuality, setMinQuality] = useState<number | null>(null); const [maxQuality, setMaxQuality] = useState<number | null>(null);
   const [applied, setApplied] = useState<SearchState>(initialSearch); const [page, setPage] = useState(1); const [pages, setPages] = useState(1); const [total, setTotal] = useState(0);
   const [detail, setDetail] = useState<ItemDetail | null>(null); const [selectedVariant, setSelectedVariant] = useState(''); const [wantedQuantity, setWantedQuantity] = useState(1);
   const [history, setHistory] = useState<HistoryData | null>(null); const [comparison, setComparison] = useState<ComparisonData | null>(null); const [historyDays, setHistoryDays] = useState(30);
@@ -75,6 +94,8 @@ export function AuctionDashboard() {
     const params = new URLSearchParams({ realmId: String(targetRealmId), page: String(targetPage), limit: String(pageSize), sort: state.sort, direction: state.direction });
     if (state.query) params.set('q', state.query); if (state.bonusStat) params.set('bonusStat', String(state.bonusStat));
     if (state.subclasses.length) params.set('subclasses', state.subclasses.join(',')); if (state.inventoryTypes.length) params.set('inventoryTypes', state.inventoryTypes.join(','));
+    if (state.expansionId !== null) params.set('expansions', String(state.expansionId)); if (state.minLevel !== null) params.set('minLevel', String(state.minLevel)); if (state.maxLevel !== null) params.set('maxLevel', String(state.maxLevel));
+    if (state.minQuality !== null) params.set('minQuality', String(state.minQuality)); if (state.maxQuality !== null) params.set('maxQuality', String(state.maxQuality));
     try {
       const response = await fetch(`${collectorUrl}/api/armor?${params}`); if (!response.ok) throw new Error();
       const data = await response.json() as { items: ArmorItem[]; total: number; page: number; pages: number };
@@ -83,11 +104,11 @@ export function AuctionDashboard() {
   };
 
   const closeDetail = () => { setDetail(null); setSelectedVariant(''); setHistory(null); setComparison(null); const url = new URL(window.location.href); url.searchParams.delete('item'); window.history.replaceState(null, '', url); };
-  const openDetail = async (itemId: number, targetRealmId = realmId) => {
+  const openDetail = async (itemId: number, targetRealmId = realmId, targetVariantKey = '') => {
     if (targetRealmId === null) return; setDetailLoading(true); setError('');
     try {
       const response = await fetch(`${collectorUrl}/api/armor/${itemId}?realmId=${targetRealmId}`); if (!response.ok) throw new Error();
-      const data = await response.json() as ItemDetail; setDetail(data); setSelectedVariant(data.variants[0]?.variantKey ?? ''); setWantedQuantity(1);
+      const data = await response.json() as ItemDetail; setDetail(data); setSelectedVariant(data.variants.some((variant) => variant.variantKey === targetVariantKey) ? targetVariantKey : data.variants[0]?.variantKey ?? ''); setWantedQuantity(1);
       const url = new URL(window.location.href); url.searchParams.set('item', String(itemId)); url.searchParams.set('realm', String(targetRealmId)); window.history.replaceState(null, '', url);
       fetch(`${collectorUrl}/api/armor/${itemId}/comparison`).then((value) => value.ok ? value.json() : Promise.reject()).then(setComparison).catch(() => setComparison(null));
     } catch { setError('Unable to load item details.'); } finally { setDetailLoading(false); }
@@ -98,15 +119,24 @@ export function AuctionDashboard() {
     setRealmId((data.realms.find((realm) => realm.id === urlRealm) ?? data.realms.find((realm) => realm.id === saved) ?? data.realms.find((realm) => realm.isDefault) ?? data.realms[0])?.id ?? null);
   }).catch(() => { setError('Unable to load realms.'); setLoading(false); }); }, []);
 
-  useEffect(() => { if (realmId === null) return; const deepItemId = Number(new URL(window.location.href).searchParams.get('item')); window.localStorage.setItem('auction-house-realm-id', String(realmId)); setApplied(initialSearch); setQuery(''); closeDetail();
+  useEffect(() => { if (realmId === null) return; const deepItemId = Number(new URL(window.location.href).searchParams.get('item')); window.localStorage.setItem('auction-house-realm-id', String(realmId)); setApplied(initialSearch); setQuery(''); setExpansionId(null); setMinLevel(''); setMaxLevel(''); setMinQuality(null); setMaxQuality(null); setFilterOpen(false); closeDetail();
     void loadArmor(realmId, initialSearch).then(() => { if (Number.isSafeInteger(deepItemId) && deepItemId > 0) void openDetail(deepItemId, realmId); });
     // Realm changes intentionally reset list filters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realmId]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const tooltipWindow = window as Window & { WH?: { Tooltips?: { refreshLinks?: () => void } }; $WowheadPower?: { refreshLinks?: () => void } };
+      tooltipWindow.WH?.Tooltips?.refreshLinks?.();
+      tooltipWindow.$WowheadPower?.refreshLinks?.();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [items, detail]);
+
   const buildSearch = (sort = applied.sort, direction = applied.direction): SearchState => {
     const group = armorGroups.find((entry) => entry.label === armorGroup); const leaf = group?.leaves.find((entry) => entry.label === armorLeaf);
-    return { query: query.trim(), group: armorGroup, leaf: armorLeaf, bonusStat: leaf?.bonusStat, subclasses: leaf?.subclassIds.length ? leaf.subclassIds : group?.subclassIds ?? [], inventoryTypes: leaf?.types ?? [], sort, direction };
+    return { query: query.trim(), group: armorGroup, leaf: armorLeaf, bonusStat: leaf?.bonusStat, subclasses: leaf?.subclassIds.length ? leaf.subclassIds : group?.subclassIds ?? [], inventoryTypes: leaf?.types ?? [], expansionId, minLevel: minLevel === '' ? null : Number(minLevel), maxLevel: maxLevel === '' ? null : Number(maxLevel), minQuality, maxQuality, sort, direction };
   };
   const search = () => { if (realmId === null) return; const state = buildSearch(); setApplied(state); closeDetail(); if (armorGroups.find((group) => group.label === armorGroup)?.leaves.find((leaf) => leaf.label === armorLeaf)?.kind === 'special') { setItems([]); setTotal(0); setError('Runecarving is not available yet.'); return; } void loadArmor(realmId, state); };
   const changePage = (next: number) => { if (realmId !== null && next >= 1 && next <= pages) void loadArmor(realmId, applied, next); };
@@ -121,11 +151,17 @@ export function AuctionDashboard() {
 
   return <main className="h-dvh overflow-hidden bg-[#3b3531] p-1.5 font-[Tahoma,Arial,sans-serif] text-[#e7e2d8]">
     <div className="mx-auto flex h-full max-w-[1440px] flex-col gap-1.5 overflow-hidden rounded-[7px] border border-[#514a45] bg-[#272220] p-1.5 shadow-[0_0_0_1px_#171413,0_8px_30px_rgba(0,0,0,.45)]">
-      <header className="flex min-h-9 flex-wrap items-center gap-2 rounded-[5px] bg-[#211c1a] px-1.5 py-1 shadow-inner shadow-black/70">
+      <header className="relative flex min-h-9 flex-wrap items-center gap-2 rounded-[5px] bg-[#211c1a] px-1.5 py-1 shadow-inner shadow-black/70">
         <label className="sr-only" htmlFor="realm">Choose a realm</label><select id="realm" value={realmId ?? ''} onChange={(event) => setRealmId(Number(event.target.value))} className="h-7 w-48 rounded border border-[#77706b] bg-[#292624] px-2 text-xs outline-none focus:border-[#d0b860]">{realms.map((realm) => <option key={realm.id} value={realm.id}>{realm.name}</option>)}</select>
         <button aria-label="Favorites" className="grid size-7 place-items-center rounded border border-[#111] bg-[#373332] text-[#807d77]">★</button><button aria-label="Deals" className="grid size-7 place-items-center rounded border border-[#111] bg-[#373332] text-[#f0d64c]">✿</button>
         <label className="relative min-w-44 flex-1"><span className="pointer-events-none absolute inset-y-0 left-2 flex items-center text-[#827b76]">⌕</span><span className="sr-only">Search</span><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') search(); }} placeholder="Search" className="h-7 w-full rounded border border-[#080706] bg-[#171514] pl-6 pr-2 text-xs outline-none placeholder:text-[#7e7873]" /></label>
-        <button className="flex h-7 w-28 items-center justify-between rounded border border-[#171311] bg-[#332d2a] px-3 text-xs">Filter <span className="text-[#f0cc22]">▶</span></button><button onClick={search} className="h-7 w-[116px] rounded border border-[#d07140] bg-gradient-to-b from-[#b10d0d] to-[#680000] font-serif text-sm text-[#ffe759] shadow-[inset_0_1px_#df4545,0_0_0_1px_#160000]">Search</button>
+        <button aria-expanded={filterOpen} onClick={() => setFilterOpen((value) => !value)} className={`flex h-7 w-28 items-center justify-between rounded border px-3 text-xs ${filterOpen ? 'border-[#aaa4df] bg-[#4a456f]' : 'border-[#171311] bg-[#332d2a]'}`}>Filter <span className="text-[#f0cc22]">▶</span></button><button onClick={() => { setFilterOpen(false); search(); }} className="h-7 w-[116px] rounded border border-[#d07140] bg-gradient-to-b from-[#b10d0d] to-[#680000] font-serif text-sm text-[#ffe759] shadow-[inset_0_1px_#df4545,0_0_0_1px_#160000]">Search</button>
+        {filterOpen && <div className="absolute right-[122px] top-[34px] z-50 w-72 rounded border border-[#76718d] bg-[#090b19] p-3 text-sm shadow-[0_8px_24px_#000]">
+          <div className="mb-3"><label className="block font-serif text-[#e9cc46]">Level Range</label><div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2"><input aria-label="Minimum item level" inputMode="numeric" value={minLevel} onChange={(event) => setMinLevel(event.target.value.replace(/\D/g, ''))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-2 py-1"/><span>–</span><input aria-label="Maximum item level" inputMode="numeric" value={maxLevel} onChange={(event) => setMaxLevel(event.target.value.replace(/\D/g, ''))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-2 py-1"/></div></div>
+          <div className="mb-3"><label className="block font-serif text-[#e9cc46]">Rarity</label><div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2"><select aria-label="Minimum rarity" value={minQuality ?? ''} onChange={(event) => setMinQuality(event.target.value === '' ? null : Number(event.target.value))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-1 py-1"><option value="">Any</option>{qualities.map((quality, index) => <option key={quality} value={index}>{quality}</option>)}</select><span>to</span><select aria-label="Maximum rarity" value={maxQuality ?? ''} onChange={(event) => setMaxQuality(event.target.value === '' ? null : Number(event.target.value))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-1 py-1"><option value="">Any</option>{qualities.map((quality, index) => <option key={quality} value={index}>{quality}</option>)}</select></div></div>
+          <div className="mb-4"><label htmlFor="era" className="block font-serif text-[#e9cc46]">Era</label><select id="era" value={expansionId ?? ''} onChange={(event) => setExpansionId(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full rounded border border-[#343238] bg-[#211f21] px-2 py-1"><option value="">All expansions</option>{expansions.map((expansion, index) => <option key={expansion} value={index}>{expansion}</option>)}</select></div>
+          <div className="flex gap-2"><button onClick={() => { setExpansionId(null); setMinLevel(''); setMaxLevel(''); setMinQuality(null); setMaxQuality(null); }} className="flex-1 rounded border border-[#514a45] bg-[#332d2a] px-3 py-1">Reset</button><button onClick={() => { setFilterOpen(false); search(); }} className="flex-1 rounded border border-[#d07140] bg-[#7f0808] px-3 py-1 text-[#ffe759]">Apply</button></div>
+        </div>}
       </header>
       <div className="grid min-h-0 flex-1 gap-1.5 lg:grid-cols-[180px_minmax(0,1fr)]">
         <aside className="overflow-y-auto rounded-[5px] border border-[#151312] bg-[#181514] p-1.5 shadow-inner shadow-black/80">{categories.map((category) => <div key={category} className="mb-1">
@@ -152,7 +188,7 @@ export function AuctionDashboard() {
           </div> : <div className="flex h-full min-h-0 flex-col">
             <div className="flex items-center border-b border-[#413b36] bg-[#211d1b] px-3 py-1.5 text-xs text-[#8f8983]"><span>{loading ? 'Loading…' : `${total.toLocaleString()} results`}</span><span className="ml-auto">Page {page} of {pages}</span></div>
             <div className="grid grid-cols-[minmax(0,1fr)_145px_96px_84px] border-b border-[#504841] bg-[#2b2623] px-3 py-1 text-xs text-[#dac364]"><button className="text-left" onClick={() => changeSort('name')}>Item</button><button className="text-left" onClick={() => changeSort('price')}>Unit Price</button><button className="text-left" onClick={() => changeSort('quantity')}>Available</button><button className="text-left" onClick={() => changeSort('listings')}>Auctions</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto">{items.map((item, index) => <button key={`${item.id}-${item.variantKey}`} onClick={() => void openDetail(item.id)} className={`grid w-full grid-cols-[minmax(0,1fr)_145px_96px_84px] items-center border-b border-[#292421] px-3 py-2 text-left text-[13px] ${index % 2 ? 'bg-[#211d1b]' : 'bg-[#1c1917]'} hover:bg-[#38312b]`}><span className="min-w-0"><b className="block truncate font-normal text-[#e4d6b9]">{item.name}</b><small className="block truncate text-[#8b857f]">{armorTypes[Number(item.subclassId)] ?? 'Armor'}{item.inventoryType ? ` · ${item.inventoryType}` : ''}{item.tertiaryStats.map((stat) => ` · ${statNames[stat]}`).join('')}</small></span><span>{formatGold(item.minBuyoutCopper)}</span><span>{Number(item.quantity).toLocaleString()}</span><span>{Number(item.listingCount).toLocaleString()}</span></button>)}{!loading && items.length === 0 && <p className="p-6 text-center text-sm text-[#b5aea4]">{error || 'No results found.'}</p>}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto">{items.map((item, index) => <div key={`${item.id}-${item.variantKey}`} role="button" tabIndex={0} onClick={() => void openDetail(item.id, realmId, item.variantKey)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openDetail(item.id, realmId, item.variantKey); } }} className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_145px_96px_84px] items-center border-b border-[#292421] px-3 py-2 text-left text-[13px] outline-none ${index % 2 ? 'bg-[#211d1b]' : 'bg-[#1c1917]'} hover:bg-[#38312b] focus:bg-[#38312b]`}><span className="min-w-0"><a href={wowheadHref(item.id, item.bonusListIds, item.modifiers, item.effectiveItemLevel)} data-wowhead={wowheadData(item.id, item.bonusListIds, item.modifiers, item.effectiveItemLevel)} data-wh-icon-size="tiny" onClick={(event) => event.preventDefault()} className="block truncate font-normal no-underline" style={{ color: qualityColors[item.qualityType ?? ''] ?? '#e4d6b9' }}>{item.name}</a><small className="block truncate text-[#8b857f]">{armorTypes[Number(item.subclassId)] ?? 'Armor'}{item.inventoryType ? ` · ${item.inventoryType}` : ''}{item.effectiveItemLevel !== null ? ` · Niv ${item.effectiveItemLevel}` : item.itemLevel !== null ? ` · Base ${item.itemLevel}` : ''}{item.tertiaryStats.map((stat) => ` · ${statNames[stat]}`).join('')}</small></span><span>{formatGold(item.minBuyoutCopper)}</span><span>{Number(item.quantity).toLocaleString()}</span><span>{Number(item.listingCount).toLocaleString()}</span></div>)}{!loading && items.length === 0 && <p className="p-6 text-center text-sm text-[#b5aea4]">{error || 'No results found.'}</p>}</div>
             <div className="flex items-center justify-center gap-3 border-t border-[#413b36] bg-[#211d1b] p-1.5"><button disabled={page <= 1 || loading} onClick={() => changePage(page - 1)} className="rounded border border-[#514a45] bg-[#332d2a] px-4 py-1 text-xs disabled:opacity-40">Previous</button><span className="text-xs">{page} / {pages}</span><button disabled={page >= pages || loading} onClick={() => changePage(page + 1)} className="rounded border border-[#514a45] bg-[#332d2a] px-4 py-1 text-xs disabled:opacity-40">Next</button></div>
           </div>}
         </section>
