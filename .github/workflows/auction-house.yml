@@ -1,0 +1,36 @@
+name: Auction House Web
+
+on:
+  push:
+    paths:
+      - 'AuctionHouseWeb/**'
+      - '.github/workflows/auction-house.yml'
+  pull_request:
+    paths:
+      - 'AuctionHouseWeb/**'
+      - '.github/workflows/auction-house.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: AuctionHouseWeb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: AuctionHouseWeb/apps/web
+      - name: Lint web
+        run: npm run lint
+        working-directory: AuctionHouseWeb/apps/web
+      - name: Build and start fixture stack
+        run: docker compose --env-file .env.example up --build -d --wait
+      - name: Verify fixture flow
+        run: node apps/collector/scripts/verify-fixture.mjs
+      - name: Stop stack
+        if: always()
+        run: docker compose --env-file .env.example down -v

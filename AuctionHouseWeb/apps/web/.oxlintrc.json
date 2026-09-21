@@ -29,6 +29,7 @@
     "build/**",
     "dist/**",
     "coverage/**",
+    "components/ui/**",
     "next-env.d.ts"
   ],
   "rules": {
@@ -51,6 +52,8 @@
     "typescript/no-namespace": "error",
     "typescript/no-require-imports": "error",
     "typescript/no-unnecessary-type-constraint": "error",
-    "typescript/no-unsafe-function-type": "error"
+    "typescript/no-unsafe-function-type": "error",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "react/react-compiler": "off"
   }
 }

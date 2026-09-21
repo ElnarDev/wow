@@ -4,7 +4,9 @@ Proyecto abierto y gratuito para que la hermandad consulte la Casa de Subastas d
 
 ## Estado
 
-Estamos en fase de descubrimiento y diseño. No hay aplicación ni credenciales creadas todavía. El plan ejecutable está en [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) y la investigación, decisiones y fuentes están en [docs/RESEARCH.md](docs/RESEARCH.md).
+El vertical slice local ya está implementado: Docker Compose levanta PostgreSQL, el colector y el dashboard. Sin credenciales, el colector usa una fixture versionada de Area 52; con credenciales locales de Battle.net, sincroniza el catálogo US y descarga capturas oficiales.
+
+El siguiente hito es validar una ejecución local completa, añadir pruebas automatizadas del colector y, cuando existan credenciales, validar la primera captura oficial. El plan ejecutable está en [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) y la investigación, decisiones y fuentes están en [docs/RESEARCH.md](docs/RESEARCH.md).
 
 ## Alcance del MVP
 
@@ -22,6 +24,6 @@ Estamos en fase de descubrimiento y diseño. No hay aplicación ni credenciales 
 - Se conserva únicamente el mínimo de datos y durante el plazo compatible con los términos de Blizzard.
 - El código, configuración de ejemplo y documentación serán públicos; las credenciales y datos operativos no.
 
-## Próximo hito
+## Ejecución local
 
-Completar la fase 0 del plan: crear una aplicación de servidor en el portal de Battle.net. Area 52 será el mercado principal inicial, resuelto por nombre contra el catálogo oficial. Entonces se podrá implementar localmente el vertical slice: descargar una captura, identificar Armor, persistir agregados y mostrarlos en una tabla local con Docker Compose.
+Consulta [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md). La primera ejecución sólo necesita copiar `.env.example` a `.env` y elegir una contraseña local de PostgreSQL; no requiere credenciales de Blizzard.

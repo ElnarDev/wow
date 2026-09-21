@@ -1,4 +1,5 @@
 node_modules
-.vinext
+.next
 dist
 .wrangler
+npm-debug.log

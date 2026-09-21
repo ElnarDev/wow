@@ -12,7 +12,7 @@ const realmSlug = process.env.DEFAULT_REALM_SLUG ?? 'area-52';
 const comparisonRealmSlugs = [...new Set([realmSlug, ...(process.env.COMPARISON_REALM_SLUGS ?? 'stormrage,illidan,tichondrius,sargeras,malganis').split(',')].map((value) => value.trim()).filter(Boolean))];
 const collectionIntervalMinutes = Math.max(5, Number(process.env.COLLECTION_INTERVAL_MINUTES) || 10);
 const maxNewItemMetadataPerRun = Number(process.env.MAX_NEW_ITEM_METADATA_PER_RUN ?? 250);
-const credentialsPresent = Boolean(process.env.BLIZZARD_CLIENT_ID && process.env.BLIZZARD_CLIENT_SECRET);
+const credentialsPresent = [process.env.BLIZZARD_CLIENT_ID, process.env.BLIZZARD_CLIENT_SECRET].every((value) => typeof value === 'string' && value.trim().length > 0);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let latest = { status: 'starting', mode: credentialsPresent ? 'blizzard' : 'fixture', processedAt: null, armorListings: 0, detail: null, targetRealm: null, comparisonTargets: comparisonRealmSlugs.length };
 let isCollecting = false;
@@ -59,6 +59,7 @@ async function setupSchema() {
     ALTER TABLE items ADD COLUMN IF NOT EXISTS quality_type TEXT;
     ALTER TABLE items ADD COLUMN IF NOT EXISTS quality_rank INTEGER;
     ALTER TABLE items ADD COLUMN IF NOT EXISTS expansion_id INTEGER;
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS name_es_mx TEXT;
     CREATE INDEX IF NOT EXISTS items_armor_filters_idx ON items (item_class_id, expansion_id, quality_rank, item_level);
     CREATE TABLE IF NOT EXISTS price_snapshots (ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE, item_id BIGINT NOT NULL REFERENCES items(id), min_buyout_copper BIGINT NOT NULL, quantity BIGINT NOT NULL, listing_count INTEGER NOT NULL, PRIMARY KEY (ingestion_run_id,item_id));
     CREATE INDEX IF NOT EXISTS price_snapshots_item_run_idx ON price_snapshots (item_id, ingestion_run_id DESC);
@@ -70,6 +71,7 @@ async function setupSchema() {
     CREATE INDEX IF NOT EXISTS auction_variants_tertiary_stats_idx ON auction_variants USING GIN (tertiary_stats);
     CREATE TABLE IF NOT EXISTS variant_price_levels (ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE, variant_id BIGINT NOT NULL REFERENCES auction_variants(id), unit_price_copper BIGINT NOT NULL, quantity BIGINT NOT NULL, listing_count INTEGER NOT NULL, PRIMARY KEY(ingestion_run_id,variant_id,unit_price_copper));
     CREATE INDEX IF NOT EXISTS variant_price_levels_variant_run_idx ON variant_price_levels (variant_id, ingestion_run_id DESC, unit_price_copper);`);
+  await pool.query("UPDATE realms SET slug='fixture-area-52', updated_at=NOW() WHERE id=0 AND region='us' AND slug='area-52'");
   const missingLevels = await pool.query(`SELECT id,item_id AS "itemId",bonus_list_ids AS "bonusListIds",modifiers FROM auction_variants WHERE effective_item_level IS NULL`);
   const updates = missingLevels.rows.map((variant) => ({ id: variant.id, effective_item_level: effectiveItemLevel(variant.itemId, variant.bonusListIds, variant.modifiers) }));
   for (let offset = 0; offset < updates.length; offset += 5000) await pool.query(`UPDATE auction_variants SET effective_item_level=data.effective_item_level FROM jsonb_to_recordset($1::JSONB) AS data(id BIGINT,effective_item_level INTEGER) WHERE auction_variants.id=data.id`, [JSON.stringify(updates.slice(offset, offset + 5000))]);
@@ -209,7 +211,13 @@ async function persistSnapshot(realmId, auctions, accessToken) {
     }
     if (!item && accessToken) continue;
     if (!item) {
-      item = { id: itemId, name: `Fixture ${itemId}`, itemClassId: auction.itemClassId };
+      item = {
+        id: itemId, name: auction.name ?? `Fixture ${itemId}`, itemClassId: auction.itemClassId,
+        itemSubclassId: auction.itemSubclassId ?? null, inventoryType: auction.inventoryType ?? null,
+        itemLevel: auction.itemLevel ?? null, requiredLevel: auction.requiredLevel ?? null,
+        qualityType: auction.qualityType ?? null, qualityRank: auction.qualityRank ?? null,
+        expansionId: auction.expansionId ?? null,
+      };
       metadataByItemId.set(itemId, item);
     }
     if (item.itemClassId !== 4) continue;
@@ -223,7 +231,9 @@ async function persistSnapshot(realmId, auctions, accessToken) {
     const level = currentVariant.levels.get(unit) ?? { unit_price_copper: unit, quantity: 0, listing_count: 0 };
     level.quantity += quantity; level.listing_count += 1; currentVariant.levels.set(unit, level);
     variantAggregate.set(aggregateKey, currentVariant);
-    if (!accessToken) await pool.query('INSERT INTO items (id,name,item_class_id) VALUES ($1,$2,4) ON CONFLICT (id) DO NOTHING', [itemId, item.name]);
+    if (!accessToken) await pool.query(`INSERT INTO items (id,name,item_class_id,item_subclass_id,inventory_type,item_level,required_level,quality_type,quality_rank,expansion_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,item_class_id=EXCLUDED.item_class_id,item_subclass_id=EXCLUDED.item_subclass_id,inventory_type=EXCLUDED.inventory_type,item_level=EXCLUDED.item_level,required_level=EXCLUDED.required_level,quality_type=EXCLUDED.quality_type,quality_rank=EXCLUDED.quality_rank,expansion_id=EXCLUDED.expansion_id,metadata_fetched_at=NOW()`, [item.id, item.name, item.itemClassId, item.itemSubclassId, item.inventoryType, item.itemLevel, item.requiredLevel, item.qualityType, item.qualityRank, item.expansionId]);
   }
   for (const [itemId, value] of aggregate) await pool.query('INSERT INTO price_snapshots (ingestion_run_id,item_id,min_buyout_copper,quantity,listing_count) VALUES ($1,$2,$3,$4,$5)', [run.rows[0].id, itemId, value.min, value.quantity, value.listings]);
   const variantRows = [...variantAggregate.values()].map((value) => ({
@@ -258,8 +268,25 @@ async function persistSnapshot(realmId, auctions, accessToken) {
 async function collectFixture() {
   const fixture = JSON.parse(await readFile(new URL('../fixtures/area-52-auctions.json', import.meta.url), 'utf8'));
   const realmId = 0;
-  await pool.query("INSERT INTO connected_realms (id,region,display_name,is_default) VALUES (0,'us','Area 52 (fixture)',true) ON CONFLICT (id) DO NOTHING");
+  await pool.query('UPDATE connected_realms SET is_default=FALSE WHERE region=$1', [region]);
+  await pool.query('UPDATE realms SET is_default=FALSE WHERE region=$1', [region]);
+  await pool.query("INSERT INTO connected_realms (id,region,display_name,is_default) VALUES (0,'us','Area 52 (fixture)',true) ON CONFLICT (id) DO UPDATE SET display_name=EXCLUDED.display_name,is_default=EXCLUDED.is_default,updated_at=NOW()");
+  await pool.query("INSERT INTO realms (id,connected_realm_id,region,slug,display_name,is_default) VALUES (0,0,'us','fixture-area-52','Area 52 (fixture)',true) ON CONFLICT (id) DO UPDATE SET connected_realm_id=EXCLUDED.connected_realm_id,slug=EXCLUDED.slug,display_name=EXCLUDED.display_name,is_default=EXCLUDED.is_default,updated_at=NOW()");
   return persistSnapshot(realmId, fixture.auctions, null);
+}
+
+async function spanishItemName(itemId, fallback, accessToken) {
+  const cached = await pool.query('SELECT name_es_mx FROM items WHERE id=$1', [itemId]);
+  if (cached.rows[0]?.name_es_mx?.trim()) return cached.rows[0].name_es_mx;
+  try {
+    const item = await api(`/data/wow/item/${itemId}?namespace=static-${region}&locale=es_MX`, accessToken);
+    const name = typeof item.name === 'string' && item.name.trim() ? item.name : fallback;
+    await pool.query('UPDATE items SET name_es_mx=$2 WHERE id=$1', [itemId, name]);
+    return name;
+  } catch (error) {
+    console.warn(`spanish_item_name_unavailable item=${itemId}: ${error.message}`);
+    return fallback;
+  }
 }
 
 async function collectBlizzard() {
@@ -288,7 +315,16 @@ async function collectOnce() {
       const result = credentialsPresent ? await collectBlizzard() : await collectFixture();
       latest = { status: 'ready', mode: credentialsPresent ? 'blizzard' : 'fixture', processedAt: new Date().toISOString(), armorListings: result.armorListings, armorVariants: result.armorVariants, detail: credentialsPresent ? `synced ${result.realmSlug}; hydrated ${result.newMetadataCount} new item records` : 'Add Blizzard credentials to enable live data', targetRealm: result.realmName ?? realmSlug, comparisonTargets: comparisonRealmSlugs.length };
       error = null; break;
-    } catch (caught) { error = caught; await new Promise((resolve) => setTimeout(resolve, attempt * 1000)); }
+    } catch (caught) {
+      if (credentialsPresent && /^OAuth failed: (400|401)$/.test(caught.message)) {
+        const result = await collectFixture();
+        latest = { status: 'ready', mode: 'fixture', processedAt: new Date().toISOString(), armorListings: result.armorListings, armorVariants: result.armorVariants, detail: 'Blizzard credentials were rejected; using fixture data', targetRealm: result.realmName ?? realmSlug, comparisonTargets: comparisonRealmSlugs.length };
+        error = null;
+        break;
+      }
+      error = caught;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+    }
     if (error) latest = { ...latest, status: 'error', detail: error.message, processedAt: new Date().toISOString() };
     console.log(JSON.stringify({ event: 'collect_finished', ...latest }));
   } finally { isCollecting = false; }
@@ -305,7 +341,14 @@ createServer(async (request, response) => {
   try {
     if (url.pathname === '/api/realms') {
       const result = await pool.query(`SELECT id, display_name AS name, is_default AS "isDefault"
-        FROM realms WHERE region=$1 ORDER BY is_default DESC, display_name ASC`, [region]);
+        FROM realms
+        WHERE region=$1 AND (
+          ($2::TEXT='fixture' AND id=0) OR
+          ($2::TEXT='blizzard' AND id<>0 AND EXISTS (
+            SELECT 1 FROM ingestion_runs run WHERE run.connected_realm_id=realms.connected_realm_id AND run.status='succeeded'
+          ))
+        )
+        ORDER BY is_default DESC, display_name ASC`, [region, latest.mode]);
       return sendJson(response, 200, { realms: result.rows });
     }
     const historyMatch = url.pathname.match(/^\/api\/armor\/(\d+)\/history$/);
@@ -381,6 +424,7 @@ createServer(async (request, response) => {
         FROM latest_run JOIN items i ON i.id=$2`, [selectedRealm.rows[0].connected_realm_id, itemId]);
       if (!result.rowCount || !result.rows[0].summary) return sendJson(response, 404, { error: 'Item is not available in the latest snapshot' });
       const detail = result.rows[0];
+      if (url.searchParams.get('locale') === 'es-MX') detail.name = await spanishItemName(itemId, detail.name, await token());
       detail.variants = detail.variants.map((variant) => ({ ...variant, effectiveItemLevel: effectiveItemLevel(detail.id, variant.bonusListIds, variant.modifiers) }));
       return sendJson(response, 200, { ...detail, realm: selectedRealm.rows[0].display_name, itemLevelDataBuild });
     }
@@ -421,14 +465,21 @@ createServer(async (request, response) => {
           AND (cardinality($7::INTEGER[])=0 OR i.expansion_id=ANY($7)) AND ($8::INTEGER IS NULL OR v.effective_item_level >= $8) AND ($9::INTEGER IS NULL OR v.effective_item_level <= $9)
           AND ($10::INTEGER IS NULL OR i.quality_rank >= $10) AND ($11::INTEGER IS NULL OR i.quality_rank <= $11)
         ), filtered AS (
-          SELECT id,name,"subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId","variantKey",MIN("effectiveItemLevel") AS "effectiveItemLevel",
-            MIN(context) AS context,"bonusListIds",modifiers,"tertiaryStats",MIN("minBuyoutCopper") AS "minBuyoutCopper",
+          SELECT id,name,"subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId",
+            MIN("variantKey") AS "variantKey",MIN(context) AS context,
+            (jsonb_agg(to_jsonb("bonusListIds") ORDER BY "variantKey"))->0 AS "bonusListIds",
+            (jsonb_agg(modifiers ORDER BY "variantKey"))->0 AS modifiers,
+            "tertiaryStats","effectiveItemLevel","minBuyoutCopper",
             SUM(quantity) AS quantity,SUM("listingCount")::INTEGER AS "listingCount",MAX("capturedAt") AS "capturedAt"
           FROM raw_variants
-          GROUP BY id,name,"subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId","variantKey","bonusListIds",modifiers,"tertiaryStats"
+          GROUP BY id,name,"subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId","tertiaryStats","effectiveItemLevel","minBuyoutCopper"
         ) SELECT *,COUNT(*) OVER() AS "totalCount" FROM filtered ORDER BY ${sortColumn} ${sortDirection},id ASC,"variantKey" ASC LIMIT $12 OFFSET $13`, [selectedRealm.rows[0].connected_realm_id, query, hasBonusStatFilter, bonusStat, subclasses, inventoryTypes, expansions, minLevel, maxLevel, minQuality, maxQuality, limit, (page - 1) * limit]);
       const total = Number(result.rows[0]?.totalCount ?? 0);
       const items = result.rows.map(({ totalCount, ...item }) => ({ ...item, effectiveItemLevel: item.effectiveItemLevel ?? effectiveItemLevel(item.id, item.bonusListIds, item.modifiers) }));
+      if (url.searchParams.get('locale') === 'es-MX' && items.length) {
+        const accessToken = await token();
+        await mapWithConcurrency(items, 8, async (item) => { item.name = await spanishItemName(item.id, item.name, accessToken); return item; });
+      }
       return sendJson(response, 200, { items, count: items.length, total, page, pages: Math.ceil(total / limit), limit, itemLevelDataBuild });
     }
   } catch (error) {

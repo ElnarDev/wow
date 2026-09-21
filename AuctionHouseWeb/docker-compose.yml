@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: auction_house
       POSTGRES_USER: auction_house
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-auction_house_dev}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
@@ -17,13 +17,13 @@ services:
     build: ./apps/collector
     environment:
       COLLECTOR_PORT: 3001
-      DATABASE_URL: postgresql://auction_house:${POSTGRES_PASSWORD}@postgres:5432/auction_house
+      DATABASE_URL: postgresql://auction_house:${POSTGRES_PASSWORD:-auction_house_dev}@postgres:5432/auction_house
       BLIZZARD_CLIENT_ID: ${BLIZZARD_CLIENT_ID:-}
       BLIZZARD_CLIENT_SECRET: ${BLIZZARD_CLIENT_SECRET:-}
       WOW_REGION: us
-      DEFAULT_REALM_SLUG: area-52
-      COMPARISON_REALM_SLUGS: stormrage,illidan,tichondrius,sargeras,malganis
-      COLLECTION_INTERVAL_MINUTES: 10
+      DEFAULT_REALM_SLUG: ${DEFAULT_REALM_SLUG:-area-52}
+      COMPARISON_REALM_SLUGS: ${COMPARISON_REALM_SLUGS:-stormrage,illidan,tichondrius,sargeras,malganis,ragnaros}
+      COLLECTION_INTERVAL_MINUTES: ${COLLECTION_INTERVAL_MINUTES:-10}
     ports: ['127.0.0.1:3501:3001']
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
@@ -35,8 +35,6 @@ services:
     environment:
       WATCHPACK_POLLING: 'true'
     ports: ['127.0.0.1:3500:3000']
-    volumes:
-      - ./apps/web:/app
     depends_on:
       postgres: { condition: service_healthy }
       collector: { condition: service_healthy }

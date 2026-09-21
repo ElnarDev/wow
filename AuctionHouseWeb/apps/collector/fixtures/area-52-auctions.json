@@ -2,8 +2,13 @@
   "source": "local-fixture",
   "realm": "Area 52",
   "auctions": [
-    { "itemId": 100001, "itemClassId": 4, "quantity": 1, "buyout": 124800 },
-    { "itemId": 100002, "itemClassId": 4, "quantity": 1, "buyout": 180200 },
-    { "itemId": 100003, "itemClassId": 2, "quantity": 1, "buyout": 90000 }
+    { "itemId": 100001, "name": "Fixture Plate Helm", "itemClassId": 4, "itemSubclassId": 4, "inventoryType": "HEAD", "itemLevel": 700, "requiredLevel": 80, "qualityType": "EPIC", "qualityRank": 4, "expansionId": 10, "quantity": 1, "buyout": 124800 },
+    { "itemId": 100002, "name": "Fixture Plate Chest", "itemClassId": 4, "itemSubclassId": 4, "inventoryType": "CHEST", "itemLevel": 698, "requiredLevel": 80, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 2, "buyout": 360400 },
+    { "itemId": 100003, "itemClassId": 2, "quantity": 1, "buyout": 90000 },
+    { "itemId": 100004, "name": "Fixture Mail Shoulder", "itemClassId": 4, "itemSubclassId": 3, "inventoryType": "SHOULDER", "itemLevel": 695, "requiredLevel": 80, "qualityType": "EPIC", "qualityRank": 4, "expansionId": 10, "quantity": 1, "buyout": 221100 },
+    { "itemId": 100005, "name": "Fixture Leather Gloves", "itemClassId": 4, "itemSubclassId": 2, "inventoryType": "HANDS", "itemLevel": 690, "requiredLevel": 80, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 3, "buyout": 153600 },
+    { "itemId": 100006, "name": "Fixture Cloth Robe", "itemClassId": 4, "itemSubclassId": 1, "inventoryType": "ROBE", "itemLevel": 688, "requiredLevel": 80, "qualityType": "UNCOMMON", "qualityRank": 2, "expansionId": 10, "quantity": 1, "buyout": 87600 },
+    { "itemId": 100007, "name": "Fixture Shield", "itemClassId": 4, "itemSubclassId": 6, "inventoryType": "SHIELD", "itemLevel": 692, "requiredLevel": 80, "qualityType": "EPIC", "qualityRank": 4, "expansionId": 10, "quantity": 1, "buyout": 199900 },
+    { "itemId": 100008, "name": "Fixture Necklace", "itemClassId": 4, "itemSubclassId": 0, "inventoryType": "NECK", "itemLevel": 685, "requiredLevel": 80, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 1, "buyout": 112500 }
   ]
 }

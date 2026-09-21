@@ -96,7 +96,7 @@ Las rutas públicas no reenviarán consultas a Blizzard. Leerán la base de dato
 | --- | --- | --- |
 | `GET /api/v1/armor` | `realm`, `q`, `subclass`, `sort`, `cursor` | items del último snapshot exitoso US, `capturedAt`, `stale` |
 | `GET /api/v1/items/:itemId` | `realm`, `variant?` | metadatos, serie permitida y comparación de mercados US recolectados |
-| `GET /api/v1/realms` | sin región | todos los realms US agrupados por connected realm, y estado de captura |
+| `GET /api/v1/realms` | sin región | sólo realms US con captura exitosa, agrupados por connected realm |
 | `GET /healthz` | — | estado de web, BD y antigüedad del último run; no secretos |
 
 Se validan entrada y salida con Zod; se aplica rate limit en proxy y API; cursores firmados o basados en claves estables, nunca offset sobre una tabla histórica grande.
@@ -118,7 +118,7 @@ No se necesita un SDK no oficial de Blizzard: `fetch` nativo, OAuth y un cliente
 
 ## 7. Fases y criterios de salida
 
-1. **Fundación local (1–2 sesiones):** registrar cliente Battle.net; monorepo con `apps/web`, `apps/collector`, `packages/contracts`, Docker Compose, `.env.example`, CI de lint/typecheck/test. Sale cuando `docker compose up` levanta servicios locales y el secreto no aparece en logs, UI ni Git.
+1. **Fundación local (implementada, pendiente de validación):** existen `apps/web`, `apps/collector`, Docker Compose, `.env.example`, fixture y esquema PostgreSQL. Falta verificar el recorrido completo con `docker compose up --build` y añadir CI de lint/typecheck/test. Sale cuando el stack levanta los tres servicios y el secreto no aparece en logs, UI ni Git.
 2. **Datos verticales (2–4 sesiones):** sincronizar catálogo US, resolver Area 52, cliente OAuth, descarga del mercado principal, parser, caché de metadatos Armor, migraciones y job manual. Sale cuando una captura se repite sin filas duplicadas y una muestra se contrasta contra el juego.
 3. **Web y comparativa MVP (2–4 sesiones):** carga inicial de Area 52, selector US, tabla Armor, búsqueda/filtros, ficha, sello de frescura y comparación del mercado principal con el conjunto piloto. Sale cuando un miembro puede encontrar un objeto y comparar mercados recolectados entendiendo moneda, reino, cobertura y antigüedad.
 4. **Operación local (1–2 sesiones):** scheduler, reintentos, healthcheck, backups del volumen y retención. Sale cuando hay 7 días de ejecuciones observables y una restauración local probada.
@@ -147,4 +147,4 @@ No se necesita un SDK no oficial de Blizzard: `fetch` nativo, OAuth y un cliente
 
 ## 10. Entregable siguiente
 
-La siguiente tarea de código no es una interfaz completa: crear el esqueleto de la fase 1, Docker Compose y un comando `collect-once` que funcione contra una respuesta fixture. Después se sincronizará el catálogo US. Sólo cuando las credenciales estén disponibles como secreto local se probará contra Blizzard.
+Validar el vertical slice contra la fixture: levantar Docker Compose, comprobar `/healthz`, consultar el dashboard y verificar los endpoints de Armor. Después, añadir pruebas unitarias e integradas del colector y configurar CI. Sólo cuando las credenciales estén disponibles como secreto local se probará contra Blizzard.
