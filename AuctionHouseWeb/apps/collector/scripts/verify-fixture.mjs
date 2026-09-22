@@ -26,4 +26,16 @@ if (plateHeads.count !== 1 || Number(plateHeads.items[0]?.id) !== 100001) {
   throw new Error(`Fixture Plate/Head filter is invalid: ${JSON.stringify(plateHeads)}`);
 }
 
+for (const [path, itemId] of Object.entries({
+  gems: 100020, enhancements: 100021, consumables: 100022, glyphs: 100023,
+  'trade-goods': 100024, recipes: 100025, 'profession-equipment': 100026,
+  housing: 100027, 'battle-pets': 100028, 'quest-items': 100029,
+  miscellaneous: 100030, 'wow-token': 100031,
+})) {
+  const category = await getJson(`/api/${path}?realmId=0`);
+  if (category.count !== 1 || Number(category.items?.[0]?.id) !== itemId) {
+    throw new Error(`Fixture ${path} category is invalid: ${JSON.stringify(category)}`);
+  }
+}
+
 console.log('Fixture integration check passed.');

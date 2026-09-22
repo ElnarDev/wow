@@ -24,6 +24,7 @@ services:
       DEFAULT_REALM_SLUG: ${DEFAULT_REALM_SLUG:-area-52}
       COMPARISON_REALM_SLUGS: ${COMPARISON_REALM_SLUGS:-stormrage,illidan,tichondrius,sargeras,malganis,ragnaros}
       COLLECTION_INTERVAL_MINUTES: ${COLLECTION_INTERVAL_MINUTES:-10}
+      ITEM_METADATA_CONCURRENCY: ${ITEM_METADATA_CONCURRENCY:-6}
     ports: ['127.0.0.1:3501:3001']
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]

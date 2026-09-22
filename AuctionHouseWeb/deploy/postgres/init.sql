@@ -29,10 +29,12 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
 CREATE TABLE IF NOT EXISTS items (
   id BIGINT PRIMARY KEY, name TEXT NOT NULL, item_class_id INTEGER NOT NULL,
   item_subclass_id INTEGER, inventory_type TEXT, item_level INTEGER, required_level INTEGER,
-  quality_type TEXT, quality_rank INTEGER, expansion_id INTEGER,
+  quality_type TEXT, quality_rank INTEGER, expansion_id INTEGER, name_es_mx TEXT,
   metadata_fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS items_armor_filters_idx ON items (item_class_id, expansion_id, quality_rank, item_level);
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS items_name_es_mx_search_idx ON items USING GIN (name_es_mx gin_trgm_ops);
 CREATE TABLE IF NOT EXISTS price_snapshots (
   ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE,
   item_id BIGINT NOT NULL REFERENCES items(id), min_buyout_copper BIGINT NOT NULL,
@@ -72,3 +74,10 @@ CREATE TABLE IF NOT EXISTS variant_price_levels (
   PRIMARY KEY (ingestion_run_id, variant_id, unit_price_copper)
 );
 CREATE INDEX IF NOT EXISTS variant_price_levels_variant_run_idx ON variant_price_levels (variant_id, ingestion_run_id DESC, unit_price_copper);
+CREATE TABLE IF NOT EXISTS wow_token_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  price_copper BIGINT NOT NULL,
+  provider_updated_at TIMESTAMPTZ,
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS wow_token_snapshots_captured_at_idx ON wow_token_snapshots (captured_at DESC);

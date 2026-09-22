@@ -9,6 +9,18 @@
     { "itemId": 100005, "name": "Fixture Leather Gloves", "itemClassId": 4, "itemSubclassId": 2, "inventoryType": "HANDS", "itemLevel": 690, "requiredLevel": 80, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 3, "buyout": 153600 },
     { "itemId": 100006, "name": "Fixture Cloth Robe", "itemClassId": 4, "itemSubclassId": 1, "inventoryType": "ROBE", "itemLevel": 688, "requiredLevel": 80, "qualityType": "UNCOMMON", "qualityRank": 2, "expansionId": 10, "quantity": 1, "buyout": 87600 },
     { "itemId": 100007, "name": "Fixture Shield", "itemClassId": 4, "itemSubclassId": 6, "inventoryType": "SHIELD", "itemLevel": 692, "requiredLevel": 80, "qualityType": "EPIC", "qualityRank": 4, "expansionId": 10, "quantity": 1, "buyout": 199900 },
-    { "itemId": 100008, "name": "Fixture Necklace", "itemClassId": 4, "itemSubclassId": 0, "inventoryType": "NECK", "itemLevel": 685, "requiredLevel": 80, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 1, "buyout": 112500 }
+    { "itemId": 100008, "name": "Fixture Necklace", "itemClassId": 4, "itemSubclassId": 0, "inventoryType": "NECK", "itemLevel": 685, "requiredLevel": 80, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 1, "buyout": 112500 },
+    { "itemId": 100020, "name": "Fixture Versatility Gem", "itemClassId": 3, "itemSubclassId": 8, "itemLevel": 1, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 12, "buyout": 480000 },
+    { "itemId": 100021, "name": "Fixture Weapon Enchant", "itemClassId": 8, "itemSubclassId": 11, "itemLevel": 1, "qualityType": "EPIC", "qualityRank": 4, "expansionId": 10, "quantity": 3, "buyout": 920000 },
+    { "itemId": 100022, "name": "Fixture Combat Potion", "itemClassId": 0, "itemSubclassId": 1, "itemLevel": 1, "qualityType": "UNCOMMON", "qualityRank": 2, "expansionId": 10, "quantity": 20, "buyout": 56000 },
+    { "itemId": 100023, "name": "Fixture Mage Glyph", "itemClassId": 16, "itemSubclassId": 8, "itemLevel": 1, "qualityType": "UNCOMMON", "qualityRank": 2, "expansionId": 8, "quantity": 2, "buyout": 135000 },
+    { "itemId": 100024, "name": "Fixture Enchanting Dust", "itemClassId": 7, "itemSubclassId": 12, "itemLevel": 1, "qualityType": "COMMON", "qualityRank": 1, "expansionId": 10, "quantity": 60, "buyout": 240000 },
+    { "itemId": 100025, "name": "Fixture Alchemy Recipe", "itemClassId": 9, "itemSubclassId": 6, "itemLevel": 1, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 1, "buyout": 750000 },
+    { "itemId": 100026, "name": "Fixture Mining Tool", "itemClassId": 19, "itemSubclassId": 5, "itemLevel": 600, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 1, "buyout": 310000 },
+    { "itemId": 100027, "name": "Fixture Wall Lantern", "itemClassId": 20, "itemSubclassId": 0, "itemLevel": 1, "qualityType": "UNCOMMON", "qualityRank": 2, "expansionId": 11, "quantity": 4, "buyout": 185000 },
+    { "itemId": 100028, "name": "Fixture Mechanical Pet", "itemClassId": 17, "itemSubclassId": 9, "itemLevel": 1, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 1, "buyout": 625000 },
+    { "itemId": 100029, "name": "Fixture Quest Relic", "itemClassId": 12, "itemSubclassId": 0, "itemLevel": 1, "qualityType": "COMMON", "qualityRank": 1, "expansionId": 10, "quantity": 1, "buyout": 10000 },
+    { "itemId": 100030, "name": "Fixture Mount Equipment", "itemClassId": 15, "itemSubclassId": 6, "itemLevel": 1, "qualityType": "RARE", "qualityRank": 3, "expansionId": 10, "quantity": 1, "buyout": 420000 },
+    { "itemId": 100031, "name": "Fixture WoW Token", "itemClassId": 18, "itemSubclassId": 0, "itemLevel": 1, "qualityType": "EPIC", "qualityRank": 4, "expansionId": 10, "quantity": 1, "buyout": 250000000 }
   ]
 }

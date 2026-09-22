@@ -27,3 +27,28 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--background); color: var(--foreground); font-family: Arial, Helvetica, sans-serif; }
+
+/* Dashboard typography: one UI face and a consistent 13 px control scale. */
+.auction-dashboard,
+.auction-dashboard button,
+.auction-dashboard input,
+.auction-dashboard select,
+.auction-dashboard textarea {
+  font-family: Tahoma, Arial, sans-serif;
+}
+
+.auction-dashboard .font-serif {
+  font-family: inherit;
+}
+
+.auction-dashboard > div > header,
+.auction-dashboard > div > footer,
+.auction-dashboard > div > .grid > aside {
+  font-size: 13px;
+}
+
+.auction-dashboard > div > header :is(button, input, select),
+.auction-dashboard > div > footer :is(button, input, select),
+.auction-dashboard > div > .grid > aside button {
+  font-size: inherit;
+}
