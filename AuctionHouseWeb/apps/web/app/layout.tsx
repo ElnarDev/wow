@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'AH Ledger | WoW US',
-  description: 'Precios de Armor de World of Warcraft para mercados US.',
+  description: 'Precios de la Casa de Subastas de World of Warcraft Retail para mercados US.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

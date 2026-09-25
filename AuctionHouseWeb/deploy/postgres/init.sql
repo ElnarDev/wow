@@ -74,6 +74,13 @@ CREATE TABLE IF NOT EXISTS variant_price_levels (
   PRIMARY KEY (ingestion_run_id, variant_id, unit_price_copper)
 );
 CREATE INDEX IF NOT EXISTS variant_price_levels_variant_run_idx ON variant_price_levels (variant_id, ingestion_run_id DESC, unit_price_copper);
+CREATE TABLE IF NOT EXISTS market_item_summaries (
+  ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE,
+  item_id BIGINT NOT NULL REFERENCES items(id), variant_id BIGINT NOT NULL REFERENCES auction_variants(id),
+  effective_item_level INTEGER, min_buyout_copper BIGINT NOT NULL, quantity BIGINT NOT NULL, listing_count INTEGER NOT NULL,
+  PRIMARY KEY (ingestion_run_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS market_item_summaries_run_sort_idx ON market_item_summaries (ingestion_run_id, min_buyout_copper, quantity, listing_count);
 CREATE TABLE IF NOT EXISTS wow_token_snapshots (
   id BIGSERIAL PRIMARY KEY,
   price_copper BIGINT NOT NULL,

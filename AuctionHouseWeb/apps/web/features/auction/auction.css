@@ -1,0 +1,37 @@
+.auction-dashboard,
+.auction-dashboard button,
+.auction-dashboard input,
+.auction-dashboard select,
+.auction-dashboard textarea { font-family: Tahoma, Arial, sans-serif; }
+.auction-dashboard .font-serif { font-family: inherit; }
+.auction-dashboard > div > header,
+.auction-dashboard > div > footer,
+.auction-dashboard > div > .grid > aside { font-size: 13px; }
+.auction-dashboard > div > header :is(button, input, select),
+.auction-dashboard > div > footer :is(button, input, select),
+.auction-dashboard > div > .grid > aside button { font-size: inherit; }
+.auction-dashboard section:has(.wow-detail-icon) h1 { display: flex; min-height: 3.5rem; align-items: center; margin-left: 4.25rem; color: #1eff00; text-shadow: 0 1px 2px #000, 0 0 8px color-mix(in srgb, currentColor 30%, transparent); }
+.auction-dashboard section:has(.wow-detail-icon) .wow-detail-icon { display: grid; place-items: center; background: radial-gradient(circle, #3b3b2b 0, #171512 70%); background-position: 46% 46% !important; background-repeat: no-repeat !important; background-size: 100% !important; }
+.auction-dashboard section:has(.wow-detail-icon) .wow-detail-icon > :is(img, ins, span) { position: absolute; inset: 0; width: 100%; height: 100%; margin: auto; object-fit: contain; border-radius: 0.25rem; transform: translate(-15%, -15%) scale(0.95); background-position: 46% 46% !important; background-repeat: no-repeat !important; background-size: cover !important; }
+.auction-dashboard section:has(.wow-detail-icon) section { border-color: #544b42; background: linear-gradient(135deg, #241f1c, #1a1715); box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%), 0 1px 2px rgb(0 0 0 / 55%); }
+.auction-dashboard section:has(.wow-detail-icon) aside { border-left-color: #62574d; background: linear-gradient(180deg, #211d1a, #151211); }
+.auction-dashboard .wow-money { display: inline-flex; align-items: center; gap: 0.22rem; font-variant-numeric: tabular-nums; }
+.auction-dashboard .wow-money b { color: #f7e7b2; font-weight: 600; }
+.auction-dashboard .wow-coin { display: inline-block; width: 0.78rem; height: 0.78rem; border: 1px solid rgb(32 22 7 / 90%); border-radius: 999px; box-shadow: inset 0 1px 1px rgb(255 255 255 / 65%), inset 0 -1px 1px rgb(0 0 0 / 45%), 0 1px 1px rgb(0 0 0 / 70%); }
+.auction-dashboard .wow-coin-gold { background: radial-gradient(circle at 35% 28%, #fffbd0 0 10%, #ffd84b 18%, #d38d08 57%, #704004 100%); }
+.auction-dashboard .wow-coin-silver { background: radial-gradient(circle at 35% 28%, #fff 0 10%, #d6d9dd 18%, #8d9299 57%, #464b51 100%); }
+.auction-dashboard .auction-result-link { display: flex; min-width: 0; align-items: center; gap: 0.4rem; font-size: 0.95rem; font-weight: 600; line-height: 1.6rem; }
+.auction-dashboard .auction-result-link > :is(ins, span[class^='icon']) { flex: 0 0 22px; width: 22px !important; height: 22px !important; background-position: center !important; background-size: cover !important; }
+.auction-dashboard .auction-result-link > .iconmedium,
+.auction-dashboard .auction-result-link > .iconsmall,
+.auction-dashboard .auction-result-link > .iconlarge { width: 22px !important; height: 22px !important; min-width: 22px !important; min-height: 22px !important; }
+.auction-dashboard .auction-result-link > .iconmedium > del,
+.auction-dashboard .auction-result-link > .iconsmall > del,
+.auction-dashboard .auction-result-link > .iconlarge > del,
+.auction-dashboard .auction-result-link > .iconmedium > ins,
+.auction-dashboard .auction-result-link > .iconsmall > ins,
+.auction-dashboard .auction-result-link > .iconlarge > ins { width: 22px !important; height: 22px !important; left: 0 !important; top: 0 !important; background-size: 22px 22px !important; }
+.auction-dashboard .auction-result-link > .iconmedium > ins,
+.auction-dashboard .auction-result-link > .iconsmall > ins,
+.auction-dashboard .auction-result-link > .iconlarge > ins { background-position: center !important; }
+.auction-dashboard .item-quality-badge { display: inline-block; width: 24px; height: 24px; flex: 0 0 auto; background-position: center; background-repeat: no-repeat; background-size: contain; vertical-align: middle; }

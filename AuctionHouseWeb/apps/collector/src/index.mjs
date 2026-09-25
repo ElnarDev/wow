@@ -1,52 +1,19 @@
 import { createServer } from 'node:http';
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import pg from 'pg';
-import bonusIdData from './vendor/lib-bonus-id/addon_data.json' with { type: 'json' };
-import { Calculator as BonusIdCalculator } from './vendor/lib-bonus-id/calculator.js';
+import { blizzardApi as api, getAccessToken as token } from './blizzard/client.mjs';
+import { hasItemEraData, syncItemEraData } from './catalog/item-era.mjs';
+import { getItemMetadata } from './catalog/item-metadata.mjs';
+import { shouldSynchronizeRealms, synchronizeUsRealms } from './catalog/realms.mjs';
+import { collectWowToken } from './catalog/wow-token.mjs';
+import { collectionIntervalMinutes, comparisonRealmSlugs, credentialsPresent, itemMetadataConcurrency, port, realmSlug, region } from './config.mjs';
+import { pool } from './database.mjs';
+import { effectiveItemLevel, itemLevelDataBuild, normalizeVariant } from './domain/item-variants.mjs';
+import { sendJson } from './http/json-response.mjs';
+import { boundedIntegerParam, integerListParam, integerParam } from './http/query-params.mjs';
+import { mapWithConcurrency } from './utils/map-with-concurrency.mjs';
 
-const { Pool } = pg;
-const port = Number(process.env.COLLECTOR_PORT ?? 3001);
-const region = process.env.WOW_REGION ?? 'us';
-const realmSlug = process.env.DEFAULT_REALM_SLUG ?? 'area-52';
-const comparisonRealmSlugs = [...new Set([realmSlug, ...(process.env.COMPARISON_REALM_SLUGS ?? 'stormrage,illidan,tichondrius,sargeras,malganis').split(',')].map((value) => value.trim()).filter(Boolean))];
-const collectionIntervalMinutes = Math.max(5, Number(process.env.COLLECTION_INTERVAL_MINUTES) || 10);
-const itemMetadataConcurrency = Math.max(1, Number(process.env.ITEM_METADATA_CONCURRENCY) || 6);
-const credentialsPresent = [process.env.BLIZZARD_CLIENT_ID, process.env.BLIZZARD_CLIENT_SECRET].every((value) => typeof value === 'string' && value.trim().length > 0);
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let latest = { status: 'starting', mode: credentialsPresent ? 'blizzard' : 'fixture', processedAt: null, armorListings: 0, detail: null, targetRealm: null, comparisonTargets: comparisonRealmSlugs.length, progress: { stage: 'Starting collector', current: 0, total: 1 } };
 let isCollecting = false;
-let catalogSyncedAt = 0;
-let itemEraRanges = [];
-const itemVersionUrl = 'https://raw.githubusercontent.com/t-mart/ItemVersion/refs/heads/master/src/ItemVersion/ItemData.lua';
-const qualityRanks = { POOR: 0, COMMON: 1, UNCOMMON: 2, RARE: 3, EPIC: 4, LEGENDARY: 5, ARTIFACT: 6, HEIRLOOM: 7, WOW_TOKEN: 8 };
-const bonusIdCalculator = new BonusIdCalculator(bonusIdData);
-const itemLevelDataBuild = bonusIdData.build;
-
-// Bonus IDs published by Project Shatari's generated bonus dataset.
-// WoW stat IDs: 61 Speed, 62 Leech, 63 Avoidance, 64 Indestructible.
-const tertiaryBonusIds = new Map([
-  [61, new Set([42, 6408, 6674, 9622, 10814, 10820, 10971, 11206, 12545])],
-  [62, new Set([41, 6409, 6673, 9620, 10812, 10818, 10969, 11204, 12544])],
-  [63, new Set([40, 6410, 6675, 7886, 10965, 11200, 12543])],
-  [64, new Set([43, 5803, 6411, 8975])],
-]);
-
-function normalizeVariant(auctionItem = {}) {
-  const bonusListIds = [...new Set(auctionItem.bonus_lists ?? [])].map(Number).filter(Number.isSafeInteger).sort((a, b) => a - b);
-  const modifiers = (auctionItem.modifiers ?? []).map((modifier) => ({ type: Number(modifier.type), value: Number(modifier.value) }))
-    .filter((modifier) => Number.isSafeInteger(modifier.type) && Number.isFinite(modifier.value)).sort((a, b) => a.type - b.type || a.value - b.value);
-  const itemContext = Number.isSafeInteger(Number(auctionItem.context)) ? Number(auctionItem.context) : null;
-  const tertiaryStats = [...tertiaryBonusIds].filter(([, ids]) => bonusListIds.some((id) => ids.has(id))).map(([stat]) => stat);
-  const canonical = JSON.stringify({ itemContext, bonusListIds, modifiers });
-  return { variantKey: createHash('sha256').update(canonical).digest('hex'), itemContext, bonusListIds, modifiers, tertiaryStats };
-}
-
-function effectiveItemLevel(itemId, bonusListIds = [], modifiers = []) {
-  const modifierValue = (type) => Number(modifiers.find((modifier) => Number(modifier.type) === type)?.value ?? 0);
-  try { return bonusIdCalculator.calculate(Number(itemId), bonusListIds.map(Number), modifierValue(9), modifierValue(28)); }
-  catch (error) { console.warn(`item_level_calculation_failed item=${itemId}: ${error.message}`); return null; }
-}
 
 async function setupSchema() {
   await pool.query(`ALTER TABLE connected_realms ADD COLUMN IF NOT EXISTS comparison_enabled BOOLEAN NOT NULL DEFAULT FALSE;
@@ -73,163 +40,46 @@ async function setupSchema() {
     CREATE INDEX IF NOT EXISTS auction_variants_tertiary_stats_idx ON auction_variants USING GIN (tertiary_stats);
     CREATE TABLE IF NOT EXISTS variant_price_levels (ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE, variant_id BIGINT NOT NULL REFERENCES auction_variants(id), unit_price_copper BIGINT NOT NULL, quantity BIGINT NOT NULL, listing_count INTEGER NOT NULL, PRIMARY KEY(ingestion_run_id,variant_id,unit_price_copper));
     CREATE INDEX IF NOT EXISTS variant_price_levels_variant_run_idx ON variant_price_levels (variant_id, ingestion_run_id DESC, unit_price_copper);
+    CREATE TABLE IF NOT EXISTS market_item_summaries (ingestion_run_id BIGINT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE,item_id BIGINT NOT NULL REFERENCES items(id),variant_id BIGINT NOT NULL REFERENCES auction_variants(id),effective_item_level INTEGER,min_buyout_copper BIGINT NOT NULL,quantity BIGINT NOT NULL,listing_count INTEGER NOT NULL,PRIMARY KEY(ingestion_run_id,item_id));
+    CREATE INDEX IF NOT EXISTS market_item_summaries_run_sort_idx ON market_item_summaries (ingestion_run_id,min_buyout_copper,quantity,listing_count);
     CREATE TABLE IF NOT EXISTS wow_token_snapshots (id BIGSERIAL PRIMARY KEY,price_copper BIGINT NOT NULL,provider_updated_at TIMESTAMPTZ,captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE INDEX IF NOT EXISTS wow_token_snapshots_captured_at_idx ON wow_token_snapshots (captured_at DESC);`);
   await pool.query("UPDATE realms SET slug='fixture-area-52', updated_at=NOW() WHERE id=0 AND region='us' AND slug='area-52'");
+  await pool.query(`INSERT INTO market_item_summaries (ingestion_run_id,item_id,variant_id,effective_item_level,min_buyout_copper,quantity,listing_count)
+    SELECT p.ingestion_run_id,v.item_id,(array_agg(v.id ORDER BY p.min_buyout_copper,v.id))[1],MAX(v.effective_item_level),MIN(p.min_buyout_copper),SUM(p.quantity),SUM(p.listing_count)::INTEGER
+    FROM variant_price_snapshots p JOIN auction_variants v ON v.id=p.variant_id
+    WHERE p.ingestion_run_id=(SELECT id FROM ingestion_runs WHERE status='succeeded' ORDER BY started_at DESC LIMIT 1)
+      AND NOT EXISTS (SELECT 1 FROM market_item_summaries s WHERE s.ingestion_run_id=p.ingestion_run_id AND s.item_id=v.item_id)
+    GROUP BY p.ingestion_run_id,v.item_id ON CONFLICT DO NOTHING`);
   const missingLevels = await pool.query(`SELECT id,item_id AS "itemId",bonus_list_ids AS "bonusListIds",modifiers FROM auction_variants WHERE effective_item_level IS NULL`);
   const updates = missingLevels.rows.map((variant) => ({ id: variant.id, effective_item_level: effectiveItemLevel(variant.itemId, variant.bonusListIds, variant.modifiers) }));
   for (let offset = 0; offset < updates.length; offset += 5000) await pool.query(`UPDATE auction_variants SET effective_item_level=data.effective_item_level FROM jsonb_to_recordset($1::JSONB) AS data(id BIGINT,effective_item_level INTEGER) WHERE auction_variants.id=data.id`, [JSON.stringify(updates.slice(offset, offset + 5000))]);
 }
 
-async function token() {
-  const auth = Buffer.from(`${process.env.BLIZZARD_CLIENT_ID}:${process.env.BLIZZARD_CLIENT_SECRET}`).toString('base64');
-  const response = await fetch(`https://${region}.battle.net/oauth/token`, { method: 'POST', headers: { authorization: `Basic ${auth}`, 'content-type': 'application/x-www-form-urlencoded' }, body: 'grant_type=client_credentials' });
-  if (!response.ok) throw new Error(`OAuth failed: ${response.status}`);
-  return (await response.json()).access_token;
-}
-
-function parseLuaNumberArray(source, name) {
-  const match = source.match(new RegExp(`Private\\.${name}\\s*=\\s*\\{([^}]*)\\}`));
-  if (!match) throw new Error(`ItemVersion data is missing ${name}`);
-  return match[1].split(',').map(Number);
-}
-
-function expansionForItemId(itemId) {
-  let low = 0; let high = itemEraRanges.length - 1; let candidate = null;
-  while (low <= high) { const middle = Math.floor((low + high) / 2); const range = itemEraRanges[middle]; if (range.start <= itemId) { candidate = range; low = middle + 1; } else high = middle - 1; }
-  return candidate && itemId <= candidate.end ? candidate.expansionId : null;
-}
-
-async function syncItemEraData() {
-  if (itemEraRanges.length) return;
-  const response = await fetch(itemVersionUrl, { headers: { 'user-agent': 'AuctionHouseWeb/0.1' } });
-  if (!response.ok) throw new Error(`ItemVersion download failed: ${response.status}`);
-  const source = await response.text();
-  const deltas = parseLuaNumberArray(source, 'runStartDeltas'); const lengths = parseLuaNumberArray(source, 'runLengths'); const versionIds = parseLuaNumberArray(source, 'runVersions');
-  const versionLine = source.match(/Private\.versionIdToVersion\s*=\s*\{(.+)\}/)?.[1];
-  if (!versionLine || deltas.length !== lengths.length || deltas.length !== versionIds.length) throw new Error('ItemVersion data has an unexpected format');
-  const versions = [...versionLine.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1].split(',').map(Number));
-  let cursor = 0; itemEraRanges = deltas.map((delta, index) => { const start = cursor + delta; cursor = start + lengths[index]; return { start, end: cursor - 1, expansionId: (versions[versionIds[index]]?.[0] ?? 1) - 1 }; });
-  const items = await pool.query('SELECT id FROM items');
-  const updates = items.rows.map(({ id }) => ({ id, expansion_id: expansionForItemId(Number(id)) })).filter((item) => item.expansion_id !== null);
-  for (let offset = 0; offset < updates.length; offset += 5000) await pool.query(`UPDATE items SET expansion_id=data.expansion_id FROM jsonb_to_recordset($1::JSONB) AS data(id BIGINT,expansion_id INTEGER) WHERE items.id=data.id`, [JSON.stringify(updates.slice(offset, offset + 5000))]);
-}
-
-async function api(path, accessToken) {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const response = await fetch(`https://${region}.api.blizzard.com${path}`, { headers: { authorization: `Bearer ${accessToken}` } });
-    if (response.ok) return response.json();
-    if ((response.status === 429 || response.status >= 500) && attempt < 4) {
-      const retryAfter = Number(response.headers.get('retry-after'));
-      await new Promise((resolve) => setTimeout(resolve, Number.isFinite(retryAfter) ? retryAfter * 1000 : (attempt + 1) * 1000));
-      continue;
-    }
-    throw new Error(`Blizzard API failed: ${response.status} for ${path}`);
-  }
-  throw new Error(`Blizzard API retries exhausted for ${path}`);
-}
-
-async function collectWowToken(accessToken) {
-  const data = await api(`/data/wow/token/index?namespace=dynamic-${region}&locale=en_US`, accessToken);
-  const priceCopper = Number(data.price);
-  if (!Number.isSafeInteger(priceCopper) || priceCopper <= 0) throw new Error('Blizzard returned an invalid WoW Token price');
-  const providerUpdatedAt = Number.isFinite(Number(data.last_updated_timestamp)) ? new Date(Number(data.last_updated_timestamp)) : null;
-  await pool.query('INSERT INTO wow_token_snapshots (price_copper,provider_updated_at) VALUES ($1,$2)', [priceCopper, providerUpdatedAt]);
-}
-
-function connectedRealmId(reference) {
-  const href = typeof reference === 'string' ? reference : reference?.href ?? reference?.key?.href;
-  if (typeof href !== 'string') return null;
-  const id = Number(href.match(/connected-realm\/(\d+)/)?.[1]);
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
-}
-
-function localizedName(value, fallback) {
-  if (typeof value === 'string' && value.trim()) return value;
-  if (value && typeof value === 'object') return value.en_US ?? value.en_GB ?? Object.values(value).find((entry) => typeof entry === 'string') ?? fallback;
-  return fallback;
-}
-
-async function apiHref(href, accessToken) {
-  const url = new URL(href);
-  return api(`${url.pathname}${url.search}`, accessToken);
-}
-
-async function mapWithConcurrency(values, limit, mapper) {
-  const results = [];
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < values.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await mapper(values[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker));
-  return results;
-}
-
-async function syncUsCatalog(accessToken) {
-  const index = await api(`/data/wow/connected-realm/index?namespace=dynamic-${region}&locale=en_US`, accessToken);
-  await pool.query('UPDATE connected_realms SET is_default=FALSE WHERE region=$1', [region]);
-  await pool.query('UPDATE realms SET is_default=FALSE WHERE region=$1', [region]);
-  const connectedRealms = await mapWithConcurrency(index.connected_realms ?? [], 8, (reference) => apiHref(reference.href, accessToken));
-  for (const connectedRealm of connectedRealms) {
-    const id = connectedRealmId(connectedRealm._links?.self ?? connectedRealm.key ?? connectedRealm.href);
-    if (!id) continue;
-    const visibleRealms = connectedRealm.realms ?? [];
-    const displayName = localizedName(visibleRealms[0]?.name, `Connected realm ${id}`);
-    await pool.query(`INSERT INTO connected_realms (id, region, display_name, is_default, updated_at)
-      VALUES ($1,$2,$3,$4,NOW()) ON CONFLICT (id) DO UPDATE SET display_name=EXCLUDED.display_name, is_default=EXCLUDED.is_default, updated_at=NOW()`, [id, region, displayName, visibleRealms.some((realm) => realm.slug === realmSlug)]);
-    for (const realm of visibleRealms) await pool.query(`INSERT INTO realms (id, connected_realm_id, region, slug, display_name, is_default, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,NOW())
-      ON CONFLICT (id) DO UPDATE SET connected_realm_id=EXCLUDED.connected_realm_id, slug=EXCLUDED.slug, display_name=EXCLUDED.display_name, is_default=EXCLUDED.is_default, updated_at=NOW()`, [realm.id, id, region, realm.slug, localizedName(realm.name, realm.slug), realm.slug === realmSlug]);
-  }
-  await pool.query('UPDATE connected_realms SET comparison_enabled=FALSE WHERE region=$1', [region]);
-  await pool.query(`UPDATE connected_realms SET comparison_enabled=TRUE WHERE id IN (
-    SELECT DISTINCT connected_realm_id FROM realms WHERE region=$1 AND slug=ANY($2::TEXT[])
-  )`, [region, comparisonRealmSlugs]);
-  catalogSyncedAt = Date.now();
-}
-
-async function itemMetadata(itemId, accessToken) {
-  const cached = await pool.query('SELECT id,name,item_class_id AS "itemClassId",item_subclass_id AS "itemSubclassId",inventory_type AS "inventoryType",item_level AS "itemLevel",quality_type AS "qualityType",expansion_id AS "expansionId" FROM items WHERE id=$1', [itemId]);
-  if (cached.rowCount && cached.rows[0].itemLevel !== null && cached.rows[0].qualityType) return cached.rows[0];
-  let item;
-  try { item = await api(`/data/wow/item/${itemId}?namespace=static-${region}&locale=en_US`, accessToken); }
-  catch (error) {
-    if (error.message.includes('Blizzard API failed: 404')) return null;
-    throw error;
-  }
-  const row = { id: item.id, name: item.name, itemClassId: item.item_class?.id ?? -1, itemSubclassId: item.item_subclass?.id ?? null, inventoryType: item.inventory_type?.type ?? null, itemLevel: item.level ?? null, requiredLevel: item.required_level ?? null, qualityType: item.quality?.type ?? null, qualityRank: qualityRanks[item.quality?.type] ?? null, expansionId: expansionForItemId(item.id) };
-  await pool.query(`INSERT INTO items (id,name,item_class_id,item_subclass_id,inventory_type,item_level,required_level,quality_type,quality_rank,expansion_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,item_class_id=EXCLUDED.item_class_id,item_subclass_id=EXCLUDED.item_subclass_id,inventory_type=EXCLUDED.inventory_type,item_level=EXCLUDED.item_level,required_level=EXCLUDED.required_level,quality_type=EXCLUDED.quality_type,quality_rank=EXCLUDED.quality_rank,expansion_id=EXCLUDED.expansion_id,metadata_fetched_at=NOW()`, [row.id, row.name, row.itemClassId, row.itemSubclassId, row.inventoryType, row.itemLevel, row.requiredLevel, row.qualityType, row.qualityRank, row.expansionId]);
-  return row;
-}
-
-async function persistSnapshot(realmId, auctions, accessToken) {
-  const run = await pool.query("INSERT INTO ingestion_runs (connected_realm_id,status) VALUES ($1,'running') RETURNING id", [realmId]);
+async function persistSnapshot(realmId, auctions, accessToken, sourceLastModified = null) {
+  const run = await pool.query("INSERT INTO ingestion_runs (connected_realm_id,status,source_last_modified) VALUES ($1,'running',$2) RETURNING id", [realmId, sourceLastModified]);
   const aggregate = new Map();
   const variantAggregate = new Map();
   const metadataByItemId = new Map();
+  let localizedItemIds = [];
   let newMetadataCount = 0;
   // A category is only trustworthy when every auction item is classified.
   // Resolve the entire unique-item set, using the local cache for prior captures.
   if (accessToken && auctions.length) {
     const itemIds = [...new Set(auctions.map((auction) => Number(auction.item?.id ?? auction.itemId)).filter((id) => Number.isSafeInteger(id) && id > 0))];
+    localizedItemIds = itemIds;
     const cached = await pool.query('SELECT id,name,item_class_id AS "itemClassId",item_subclass_id AS "itemSubclassId",inventory_type AS "inventoryType",item_level AS "itemLevel",required_level AS "requiredLevel",quality_type AS "qualityType",quality_rank AS "qualityRank",expansion_id AS "expansionId" FROM items WHERE id=ANY($1::BIGINT[]) AND item_level IS NOT NULL AND quality_type IS NOT NULL', [itemIds]);
     for (const item of cached.rows) metadataByItemId.set(Number(item.id), item);
     const missingIds = itemIds.filter((itemId) => !metadataByItemId.has(itemId));
     let completed = itemIds.length - missingIds.length;
     latest = { ...latest, progress: { stage: 'Hydrating item metadata', current: completed, total: itemIds.length } };
     await mapWithConcurrency(missingIds, itemMetadataConcurrency, async (itemId) => {
-      const item = await itemMetadata(itemId, accessToken);
+      const item = await getItemMetadata(itemId, accessToken);
       metadataByItemId.set(itemId, item);
       newMetadataCount += item ? 1 : 0;
       completed += 1;
       latest = { ...latest, progress: { stage: 'Hydrating item metadata', current: completed, total: itemIds.length } };
     });
-    await syncSpanishItemNames(itemIds, accessToken);
   }
   latest = { ...latest, progress: { stage: 'Writing price snapshot', current: 0, total: 1 } };
   for (const auction of auctions) {
@@ -291,7 +141,12 @@ async function persistSnapshot(realmId, auctions, accessToken) {
       INSERT INTO variant_price_levels (ingestion_run_id,variant_id,unit_price_copper,quantity,listing_count)
       SELECT $1,s.id,l.unit_price_copper,l.quantity,l.listing_count FROM level_input l JOIN saved s USING(item_id,variant_key)`, [run.rows[0].id, JSON.stringify(variantRows.slice(offset, offset + 1000))]);
   }
+  await pool.query(`INSERT INTO market_item_summaries (ingestion_run_id,item_id,variant_id,effective_item_level,min_buyout_copper,quantity,listing_count)
+    SELECT $1,v.item_id,(array_agg(v.id ORDER BY p.min_buyout_copper,v.id))[1],MAX(v.effective_item_level),MIN(p.min_buyout_copper),SUM(p.quantity),SUM(p.listing_count)::INTEGER
+    FROM variant_price_snapshots p JOIN auction_variants v ON v.id=p.variant_id
+    WHERE p.ingestion_run_id=$1 GROUP BY v.item_id`, [run.rows[0].id]);
   await pool.query("UPDATE ingestion_runs SET status='succeeded' WHERE id=$1", [run.rows[0].id]);
+  if (accessToken && localizedItemIds.length) void syncSpanishItemNames(localizedItemIds, accessToken).catch((error) => console.warn(`spanish_item_index_skipped: ${error.message}`));
   latest = { ...latest, progress: { stage: 'Writing price snapshot', current: 1, total: 1 } };
   return { armorListings: aggregate.size, armorVariants: variantAggregate.size, newMetadataCount };
 }
@@ -336,7 +191,7 @@ async function syncSpanishItemNames(itemIds, accessToken) {
 async function collectBlizzard() {
   const accessToken = await token();
   try { await collectWowToken(accessToken); } catch (error) { console.warn(`wow_token_sync_skipped: ${error.message}`); }
-  if (!catalogSyncedAt || Date.now() - catalogSyncedAt > 24 * 60 * 60 * 1000) try { await syncUsCatalog(accessToken); } catch (error) { console.warn(`realm_catalog_sync_skipped: ${error.message}`); }
+  if (shouldSynchronizeRealms()) try { await synchronizeUsRealms(accessToken); } catch (error) { console.warn(`realm_catalog_sync_skipped: ${error.message}`); }
   const target = await pool.query(`SELECT candidate.connected_realm_id,candidate.slug,candidate.display_name
     FROM (SELECT DISTINCT ON (connected_realm_id) connected_realm_id,slug,display_name,is_default FROM realms
       WHERE region=$1 AND slug=ANY($2::TEXT[]) ORDER BY connected_realm_id,is_default DESC,display_name) candidate
@@ -349,7 +204,13 @@ async function collectBlizzard() {
   latest = { ...latest, progress: { stage: 'Downloading auctions', current: 1, total: 2 } };
   const commodities = await api(`/data/wow/auctions/commodities?namespace=dynamic-${region}&locale=en_US`, accessToken);
   latest = { ...latest, progress: { stage: 'Downloading auctions', current: 2, total: 2 } };
-  return { ...(await persistSnapshot(selected.connected_realm_id, [...(auctions.auctions ?? []), ...(commodities.auctions ?? [])], accessToken)), realmSlug: selected.slug, realmName: selected.display_name };
+  const sourceTimestamp = Math.max(Number(auctions.last_modified ?? 0), Number(commodities.last_modified ?? 0));
+  const sourceLastModified = sourceTimestamp > 0 ? new Date(sourceTimestamp) : null;
+  const previous = await pool.query(`SELECT source_last_modified FROM ingestion_runs WHERE connected_realm_id=$1 AND status='succeeded' ORDER BY started_at DESC LIMIT 1`, [selected.connected_realm_id]);
+  if (sourceLastModified && previous.rows[0]?.source_last_modified && new Date(previous.rows[0].source_last_modified).getTime() >= sourceLastModified.getTime()) {
+    return { armorListings: latest.armorListings ?? 0, armorVariants: latest.armorVariants ?? 0, newMetadataCount: 0, unchanged: true, realmSlug: selected.slug, realmName: selected.display_name };
+  }
+  return { ...(await persistSnapshot(selected.connected_realm_id, [...(auctions.auctions ?? []), ...(commodities.auctions ?? [])], accessToken, sourceLastModified)), realmSlug: selected.slug, realmName: selected.display_name };
 }
 
 async function collectOnce() {
@@ -359,7 +220,7 @@ async function collectOnce() {
   try {
     for (let attempt = 1; attempt <= 5; attempt += 1) try {
       await setupSchema();
-      if (credentialsPresent && !itemEraRanges.length) try { await syncItemEraData(); } catch (caught) { console.warn(`item_era_sync_skipped: ${caught.message}`); }
+      if (credentialsPresent && !hasItemEraData()) try { await syncItemEraData(pool); } catch (caught) { console.warn(`item_era_sync_skipped: ${caught.message}`); }
       const result = credentialsPresent ? await collectBlizzard() : await collectFixture();
       latest = { status: 'ready', mode: credentialsPresent ? 'blizzard' : 'fixture', processedAt: new Date().toISOString(), armorListings: result.armorListings, armorVariants: result.armorVariants, detail: credentialsPresent ? `synced ${result.realmSlug}; hydrated ${result.newMetadataCount} new item records` : 'Add Blizzard credentials to enable live data', targetRealm: result.realmName ?? realmSlug, comparisonTargets: comparisonRealmSlugs.length, progress: { stage: 'Ready', current: 1, total: 1 } };
       error = null; break;
@@ -378,8 +239,13 @@ async function collectOnce() {
   } finally { isCollecting = false; }
 }
 
-function sendJson(response, status, body) {
-  response.writeHead(status, { 'access-control-allow-origin': 'http://localhost:3500', 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(body));
+async function restoreLatestSnapshot() {
+  const restored = await pool.query(`SELECT r.started_at AS "processedAt",r.connected_realm_id AS "connectedRealmId",cr.display_name AS "realmName",COUNT(p.item_id)::INTEGER AS "armorListings"
+    FROM ingestion_runs r JOIN connected_realms cr ON cr.id=r.connected_realm_id JOIN price_snapshots p ON p.ingestion_run_id=r.id
+    WHERE r.status='succeeded' GROUP BY r.id,cr.display_name ORDER BY r.started_at DESC LIMIT 1`);
+  const snapshot = restored.rows[0];
+  if (!snapshot) return;
+  latest = { ...latest, status: 'ready', processedAt: snapshot.processedAt, armorListings: snapshot.armorListings, detail: 'serving the last validated snapshot', targetRealm: snapshot.realmName, progress: { stage: 'Ready', current: 1, total: 1 } };
 }
 
 createServer(async (request, response) => {
@@ -412,6 +278,41 @@ createServer(async (request, response) => {
           (SELECT AVG("minBuyoutCopper") FROM history) AS "meanCopper"`);
       const row = result.rows[0];
       return sendJson(response, 200, { latest: row.latest, points: row.points, stats: { captures: row.captures, medianCopper: row.medianCopper == null ? null : Math.round(Number(row.medianCopper)), meanCopper: row.meanCopper == null ? null : Math.round(Number(row.meanCopper)) } });
+    }
+    if (url.pathname === '/api/favorites') {
+      const realmId = Number(url.searchParams.get('realmId'));
+      const itemIds = integerListParam(url.searchParams, 'ids', { positive: true, limit: 100 });
+      if (!Number.isSafeInteger(realmId)) return sendJson(response, 400, { error: 'Valid realmId is required' });
+      if (!itemIds.length) return sendJson(response, 200, { items: [], count: 0 });
+      const selectedRealm = await pool.query('SELECT connected_realm_id FROM realms WHERE id=$1 AND region=$2', [realmId, region]);
+      if (!selectedRealm.rowCount) return sendJson(response, 404, { error: 'Unknown realm' });
+      const useSpanishNames = url.searchParams.get('locale') === 'es-MX';
+      const result = await pool.query(`WITH latest_run AS (
+          SELECT id,started_at FROM ingestion_runs WHERE connected_realm_id=$1 AND status='succeeded' ORDER BY started_at DESC LIMIT 1
+        ), favorite_variants AS (
+          SELECT i.id,CASE WHEN $3::BOOLEAN THEN COALESCE(NULLIF(i.name_es_mx,''),i.name) ELSE i.name END AS name,
+            i.item_class_id AS "itemClassId",i.item_subclass_id AS "subclassId",i.inventory_type AS "inventoryType",i.item_level AS "itemLevel",
+            i.quality_type AS "qualityType",i.quality_rank AS "qualityRank",i.expansion_id AS "expansionId",
+            md5(v.bonus_list_ids::TEXT || '|' || v.modifiers::TEXT) AS "variantKey",v.item_context AS context,v.bonus_list_ids AS "bonusListIds",v.modifiers,
+            s.effective_item_level AS "effectiveItemLevel",v.tertiary_stats AS "tertiaryStats",s.min_buyout_copper AS "minBuyoutCopper",s.quantity,s.listing_count AS "listingCount",
+            latest_run.started_at AS "capturedAt",TRUE AS "isAvailable",latest_run.started_at AS "lastSeenAt"
+          FROM latest_run JOIN market_item_summaries s ON s.ingestion_run_id=latest_run.id
+          JOIN auction_variants v ON v.id=s.variant_id JOIN items i ON i.id=v.item_id WHERE v.item_id=ANY($2::BIGINT[])
+        ) SELECT id,name,"itemClassId","subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId",
+          CASE WHEN (SELECT COUNT(DISTINCT sibling.item_level) FROM items sibling WHERE sibling.name=(SELECT original.name FROM items original WHERE original.id=favorite_variants.id)) > 1
+            THEN LEAST(2,1+(SELECT COUNT(DISTINCT sibling.item_level)::INTEGER FROM items sibling WHERE sibling.name=(SELECT original.name FROM items original WHERE original.id=favorite_variants.id) AND sibling.item_level < favorite_variants."itemLevel"))
+            ELSE NULL END AS "craftingQualityTier",
+          (array_agg("variantKey" ORDER BY "minBuyoutCopper","variantKey"))[1] AS "variantKey",
+          (array_agg(context ORDER BY "minBuyoutCopper","variantKey"))[1] AS context,
+          (jsonb_agg(to_jsonb("bonusListIds") ORDER BY "minBuyoutCopper","variantKey"))->0 AS "bonusListIds",
+          (jsonb_agg(modifiers ORDER BY "minBuyoutCopper","variantKey"))->0 AS modifiers,
+          (jsonb_agg(to_jsonb("tertiaryStats") ORDER BY "minBuyoutCopper","variantKey"))->0 AS "tertiaryStats",
+          MAX("effectiveItemLevel") AS "effectiveItemLevel",MIN("minBuyoutCopper") AS "minBuyoutCopper",SUM(quantity) AS quantity,
+          SUM("listingCount")::INTEGER AS "listingCount",MAX("capturedAt") AS "capturedAt",TRUE AS "isAvailable",MAX("lastSeenAt") AS "lastSeenAt"
+        FROM favorite_variants GROUP BY id,name,"itemClassId","subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId"
+        ORDER BY name ASC`, [selectedRealm.rows[0].connected_realm_id, itemIds, useSpanishNames]);
+      const items = result.rows.map((item) => ({ ...item, effectiveItemLevel: item.effectiveItemLevel ?? effectiveItemLevel(item.id, item.bonusListIds, item.modifiers) }));
+      return sendJson(response, 200, { items, count: items.length });
     }
     const historyMatch = url.pathname.match(/^\/api\/(armor|weapons|containers|gems|enhancements|consumables|glyphs|trade-goods|recipes|profession-equipment|housing|battle-pets|quest-items|miscellaneous|wow-token)\/(\d+)\/history$/);
     if (historyMatch) {
@@ -475,7 +376,7 @@ createServer(async (request, response) => {
           FROM latest_run JOIN variant_price_snapshots p ON p.ingestion_run_id=latest_run.id JOIN auction_variants v ON v.id=p.variant_id
           WHERE v.item_id=$2 GROUP BY v.bonus_list_ids,v.modifiers,v.tertiary_stats
         )
-        SELECT i.id,i.name,i.item_subclass_id AS "subclassId",i.inventory_type AS "inventoryType",i.item_level AS "itemLevel",i.required_level AS "requiredLevel",i.quality_type AS "qualityType",i.quality_rank AS "qualityRank",i.expansion_id AS "expansionId",latest_run.started_at AS "capturedAt",
+        SELECT i.id,i.name,i.item_class_id AS "itemClassId",i.item_subclass_id AS "subclassId",i.inventory_type AS "inventoryType",i.item_level AS "itemLevel",i.required_level AS "requiredLevel",i.quality_type AS "qualityType",i.quality_rank AS "qualityRank",i.expansion_id AS "expansionId",latest_run.started_at AS "capturedAt",
           (SELECT row_to_json(item_summary) FROM item_summary) AS summary,
           COALESCE((SELECT json_agg(variants ORDER BY "minBuyoutCopper", "variantKey") FROM variants),'[]') AS variants,
           COALESCE((SELECT json_agg(levels ORDER BY levels."variantKey",levels."unitPriceCopper") FROM (
@@ -497,13 +398,14 @@ createServer(async (request, response) => {
       if (!Number.isSafeInteger(realmId)) return sendJson(response, 400, { error: 'realmId must be a connected realm id' });
       const query = url.searchParams.get('q')?.trim() ?? '';
       const bonusStat = Number(url.searchParams.get('bonusStat'));
-      const subclasses = (url.searchParams.get('subclasses') ?? '').split(',').filter(Boolean).map(Number).filter(Number.isSafeInteger);
+      const subclasses = integerListParam(url.searchParams, 'subclasses');
       const inventoryTypes = (url.searchParams.get('inventoryTypes') ?? '').split(',').filter(Boolean);
-      const expansions = (url.searchParams.get('expansions') ?? '').split(',').filter(Boolean).map(Number).filter(Number.isSafeInteger);
-      const optionalInteger = (name) => { const raw = url.searchParams.get(name); if (raw === null || raw === '') return null; const value = Number(raw); return Number.isSafeInteger(value) ? value : null; };
-      const minLevel = optionalInteger('minLevel'); const maxLevel = optionalInteger('maxLevel'); const minQuality = optionalInteger('minQuality'); const maxQuality = optionalInteger('maxQuality');
-      const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-      const limit = Math.min(500, Math.max(10, Number(url.searchParams.get('limit')) || 500));
+      const expansions = integerListParam(url.searchParams, 'expansions');
+      const minLevel = integerParam(url.searchParams, 'minLevel'); const maxLevel = integerParam(url.searchParams, 'maxLevel'); const minQuality = integerParam(url.searchParams, 'minQuality'); const maxQuality = integerParam(url.searchParams, 'maxQuality');
+      const includeOutOfStock = url.searchParams.get('includeOutOfStock') === 'true';
+      const useSpanishNames = url.searchParams.get('locale') === 'es-MX';
+      const page = boundedIntegerParam(url.searchParams, 'page', { minimum: 1, maximum: Number.MAX_SAFE_INTEGER, fallback: 1 });
+      const limit = boundedIntegerParam(url.searchParams, 'limit', { minimum: 10, maximum: 500, fallback: 500 });
       const sortKey = url.searchParams.get('sort') ?? 'name';
       const sortDirection = url.searchParams.get('direction') === 'desc' ? 'DESC' : 'ASC';
       const sortColumns = { name: 'name', level: '"effectiveItemLevel"', price: '"minBuyoutCopper"', quantity: 'quantity', listings: '"listingCount"' };
@@ -515,36 +417,49 @@ createServer(async (request, response) => {
           SELECT id, started_at FROM ingestion_runs
           WHERE connected_realm_id=$1 AND status='succeeded'
           ORDER BY started_at DESC LIMIT 1
-        ), raw_variants AS (
-        SELECT i.id, i.name, i.item_subclass_id AS "subclassId", i.inventory_type AS "inventoryType",i.item_level AS "itemLevel",i.quality_type AS "qualityType",i.quality_rank AS "qualityRank",i.expansion_id AS "expansionId",
-          md5(v.bonus_list_ids::TEXT || '|' || v.modifiers::TEXT) AS "variantKey", v.item_context AS context, v.bonus_list_ids AS "bonusListIds", v.modifiers,v.effective_item_level AS "effectiveItemLevel",
-          v.tertiary_stats AS "tertiaryStats", p.min_buyout_copper AS "minBuyoutCopper", p.quantity,
-          p.listing_count AS "listingCount", latest_run.started_at AS "capturedAt"
+        ), available_variants AS (
+        SELECT i.id, CASE WHEN $16::BOOLEAN THEN COALESCE(NULLIF(i.name_es_mx,''),i.name) ELSE i.name END AS name, i.item_class_id AS "itemClassId", i.item_subclass_id AS "subclassId", i.inventory_type AS "inventoryType",i.item_level AS "itemLevel",i.quality_type AS "qualityType",i.quality_rank AS "qualityRank",i.expansion_id AS "expansionId",
+          md5(v.bonus_list_ids::TEXT || '|' || v.modifiers::TEXT) AS "variantKey", v.item_context AS context, v.bonus_list_ids AS "bonusListIds", v.modifiers,s.effective_item_level AS "effectiveItemLevel",
+          v.tertiary_stats AS "tertiaryStats", s.min_buyout_copper AS "minBuyoutCopper", s.quantity,
+          s.listing_count AS "listingCount", latest_run.started_at AS "capturedAt",TRUE AS "isAvailable",latest_run.started_at AS "lastSeenAt"
         FROM latest_run
-        JOIN variant_price_snapshots p ON p.ingestion_run_id=latest_run.id
-        JOIN auction_variants v ON v.id=p.variant_id
+        JOIN market_item_summaries s ON s.ingestion_run_id=latest_run.id
+        JOIN auction_variants v ON v.id=s.variant_id
         JOIN items i ON i.id=v.item_id
-        WHERE ($12::INTEGER IS NULL OR i.item_class_id=$12) AND ($2='' OR i.name ILIKE '%' || $2 || '%' OR i.name_es_mx ILIKE '%' || $2 || '%') AND (NOT $3::BOOLEAN OR $4=ANY(v.tertiary_stats))
+        WHERE ($12::INTEGER IS NULL OR i.item_class_id=$12) AND ($2='' OR NOT EXISTS (SELECT 1 FROM unnest(regexp_split_to_array($2, '\\s+')) AS term WHERE i.name NOT ILIKE '%' || term || '%' AND COALESCE(i.name_es_mx, '') NOT ILIKE '%' || term || '%')) AND (NOT $3::BOOLEAN OR $4=ANY(v.tertiary_stats))
           AND (cardinality($5::INTEGER[])=0 OR i.item_subclass_id=ANY($5)) AND (cardinality($6::TEXT[])=0 OR i.inventory_type=ANY($6))
           AND (cardinality($7::INTEGER[])=0 OR i.expansion_id=ANY($7)) AND ($8::INTEGER IS NULL OR v.effective_item_level >= $8) AND ($9::INTEGER IS NULL OR v.effective_item_level <= $9)
           AND ($10::INTEGER IS NULL OR i.quality_rank >= $10) AND ($11::INTEGER IS NULL OR i.quality_rank <= $11)
+        ), unavailable_variants AS (
+          SELECT DISTINCT ON (v.item_id) i.id,CASE WHEN $16::BOOLEAN THEN COALESCE(NULLIF(i.name_es_mx,''),i.name) ELSE i.name END AS name,i.item_class_id AS "itemClassId",i.item_subclass_id AS "subclassId",i.inventory_type AS "inventoryType",i.item_level AS "itemLevel",i.quality_type AS "qualityType",i.quality_rank AS "qualityRank",i.expansion_id AS "expansionId",
+            md5(v.bonus_list_ids::TEXT || '|' || v.modifiers::TEXT) AS "variantKey",v.item_context AS context,v.bonus_list_ids AS "bonusListIds",v.modifiers,v.effective_item_level AS "effectiveItemLevel",v.tertiary_stats AS "tertiaryStats",
+            p.min_buyout_copper AS "minBuyoutCopper",0::BIGINT AS quantity,0::INTEGER AS "listingCount",r.started_at AS "capturedAt",FALSE AS "isAvailable",r.started_at AS "lastSeenAt"
+          FROM ingestion_runs r
+          JOIN variant_price_snapshots p ON p.ingestion_run_id=r.id
+          JOIN auction_variants v ON v.id=p.variant_id
+          JOIN items i ON i.id=v.item_id
+          WHERE $15::BOOLEAN AND r.connected_realm_id=$1 AND r.status='succeeded' AND ($12::INTEGER IS NULL OR i.item_class_id=$12) AND ($2='' OR NOT EXISTS (SELECT 1 FROM unnest(regexp_split_to_array($2, '\\s+')) AS term WHERE i.name NOT ILIKE '%' || term || '%' AND COALESCE(i.name_es_mx, '') NOT ILIKE '%' || term || '%')) AND (NOT $3::BOOLEAN OR $4=ANY(v.tertiary_stats))
+            AND (cardinality($5::INTEGER[])=0 OR i.item_subclass_id=ANY($5)) AND (cardinality($6::TEXT[])=0 OR i.inventory_type=ANY($6))
+            AND (cardinality($7::INTEGER[])=0 OR i.expansion_id=ANY($7)) AND ($8::INTEGER IS NULL OR v.effective_item_level >= $8) AND ($9::INTEGER IS NULL OR v.effective_item_level <= $9)
+            AND ($10::INTEGER IS NULL OR i.quality_rank >= $10) AND ($11::INTEGER IS NULL OR i.quality_rank <= $11)
+          ORDER BY v.item_id,r.started_at DESC,p.min_buyout_copper ASC,v.id ASC
+        ), raw_variants AS (
+          SELECT * FROM available_variants
+          UNION ALL
+          SELECT unavailable_variants.* FROM unavailable_variants WHERE $15::BOOLEAN AND NOT EXISTS (SELECT 1 FROM available_variants WHERE available_variants.id=unavailable_variants.id)
         ), filtered AS (
-          SELECT id,name,"subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId",
+          SELECT id,name,"itemClassId","subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId",
             (array_agg("variantKey" ORDER BY "minBuyoutCopper","variantKey"))[1] AS "variantKey",
             (array_agg(context ORDER BY "minBuyoutCopper","variantKey"))[1] AS context,
             (jsonb_agg(to_jsonb("bonusListIds") ORDER BY "minBuyoutCopper","variantKey"))->0 AS "bonusListIds",
             (jsonb_agg(modifiers ORDER BY "minBuyoutCopper","variantKey"))->0 AS modifiers,
             (jsonb_agg(to_jsonb("tertiaryStats") ORDER BY "minBuyoutCopper","variantKey"))->0 AS "tertiaryStats",MAX("effectiveItemLevel") AS "effectiveItemLevel",MIN("minBuyoutCopper") AS "minBuyoutCopper",
-            SUM(quantity) AS quantity,SUM("listingCount")::INTEGER AS "listingCount",MAX("capturedAt") AS "capturedAt"
+            SUM(quantity) AS quantity,SUM("listingCount")::INTEGER AS "listingCount",MAX("capturedAt") AS "capturedAt",BOOL_OR("isAvailable") AS "isAvailable",MAX("lastSeenAt") AS "lastSeenAt"
           FROM raw_variants
-          GROUP BY id,name,"subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId"
-        ) SELECT *,COUNT(*) OVER() AS "totalCount" FROM filtered ORDER BY ${sortColumn} ${sortDirection},id ASC,"variantKey" ASC LIMIT $13 OFFSET $14`, [selectedRealm.rows[0].connected_realm_id, query, hasBonusStatFilter, bonusStat, subclasses, inventoryTypes, expansions, minLevel, maxLevel, minQuality, maxQuality, itemClassId, limit, (page - 1) * limit]);
+          GROUP BY id,name,"itemClassId","subclassId","inventoryType","itemLevel","qualityType","qualityRank","expansionId"
+        ) SELECT *,COUNT(*) OVER() AS "totalCount" FROM filtered ORDER BY "isAvailable" DESC,${sortColumn} ${sortDirection},id ASC,"variantKey" ASC LIMIT $13 OFFSET $14`, [selectedRealm.rows[0].connected_realm_id, query, hasBonusStatFilter, bonusStat, subclasses, inventoryTypes, expansions, minLevel, maxLevel, minQuality, maxQuality, itemClassId, limit, (page - 1) * limit, includeOutOfStock, useSpanishNames]);
       const total = Number(result.rows[0]?.totalCount ?? 0);
       const items = result.rows.map(({ totalCount, ...item }) => ({ ...item, effectiveItemLevel: item.effectiveItemLevel ?? effectiveItemLevel(item.id, item.bonusListIds, item.modifiers) }));
-      if (url.searchParams.get('locale') === 'es-MX' && items.length) {
-        const accessToken = await token();
-        await mapWithConcurrency(items, 8, async (item) => { item.name = await spanishItemName(item.id, item.name, accessToken); return item; });
-      }
       return sendJson(response, 200, { items, count: items.length, total, page, pages: Math.ceil(total / limit), limit, itemLevelDataBuild });
     }
   } catch (error) {
@@ -554,5 +469,5 @@ createServer(async (request, response) => {
   return sendJson(response, 404, { error: 'Not found' });
 }).listen(port, '0.0.0.0');
 
-void collectOnce();
+void restoreLatestSnapshot().catch((error) => console.warn(`snapshot_restore_skipped: ${error.message}`)).finally(() => void collectOnce());
 setInterval(() => void collectOnce(), collectionIntervalMinutes * 60 * 1000).unref();

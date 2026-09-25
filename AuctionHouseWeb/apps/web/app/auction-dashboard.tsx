@@ -1,331 +1,1916 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { auctionApi } from '../features/auction/api';
+import {
+  categories,
+  categoryForItemClass,
+  categoryPath,
+  initialSearch,
+  pageSize,
+  qualityColors,
+  statNames,
+  supportedCategories,
+} from '../features/auction/catalog';
+import { AuctionHeader } from '../features/auction/components/auction-header';
+import { AuctionSidebar } from '../features/auction/components/auction-sidebar';
+import { Money } from '../features/auction/components/money';
+import { PriceHistoryChart } from '../features/auction/components/price-history-chart';
+import { ResultsTable } from '../features/auction/components/results-table';
+import { WowTokenView } from '../features/auction/components/wow-token-view';
+import { useStoredFavorites } from '../features/auction/hooks/use-stored-favorites';
+import type {
+  AuctionItem as ArmorItem,
+  AuctionVariant as Variant,
+  CategoryGroup as ArmorGroup,
+  CategoryLeaf as ArmorLeaf,
+  CollectorHealth,
+  ComparisonData,
+  Favorite,
+  HistoryData,
+  ItemDetail,
+  Locale,
+  Realm,
+  SearchState,
+  WowTokenData,
+} from '../features/auction/types';
+import { wowheadData, wowheadHref } from '../features/auction/wowhead';
 
-type Realm = { id: number; name: string; isDefault: boolean };
-type Modifier = { type: number; value: number };
-type ArmorItem = { id: number; name: string; subclassId: number | null; inventoryType: string | null; itemLevel: number | null; effectiveItemLevel: number | null; qualityType: string | null; qualityRank: number | null; expansionId: number | null; variantKey: string; context: number | null; bonusListIds: number[]; modifiers: Modifier[]; tertiaryStats: number[]; minBuyoutCopper: number; quantity: number; listingCount: number; capturedAt: string };
-type Variant = { variantKey: string; context: number | null; bonusListIds: number[]; modifiers: Modifier[]; tertiaryStats: number[]; effectiveItemLevel: number | null; minBuyoutCopper: number; quantity: number; listingCount: number };
-type PriceLevel = { variantKey: string; unitPriceCopper: number; quantity: number; listingCount: number };
-type ItemDetail = { id: number; name: string; subclassId: number | null; inventoryType: string | null; capturedAt: string; realm: string; summary: { min_buyout_copper: number; quantity: number; listing_count: number }; variants: Variant[]; priceLevels: PriceLevel[] };
-type HistoryPoint = { capturedAt: string; minBuyoutCopper: number; quantity: number; listingCount: number };
-type HistoryData = { points: HistoryPoint[]; stats: { captures: number; lowCopper: number | null; highCopper: number | null; medianCopper: number | null; changePercent: number | null } };
-type WowTokenData = { latest: { currentCopper: number; updatedAt: string } | null; points: Array<Pick<HistoryPoint, 'capturedAt' | 'minBuyoutCopper'>>; stats: { captures: number; medianCopper: number | null; meanCopper: number | null } };
-type RealmPrice = { connectedRealmId: number; name: string; minBuyoutCopper: number; quantity: number; listingCount: number; capturedAt: string };
-type ComparisonData = { realms: RealmPrice[]; coverage: { monitored: number; total: number; targeted: number; targetMonitored: number } };
-type Favorite = { itemId: number; category: string; name: string; addedAt: string };
-type CollectorHealth = { status: 'starting' | 'collecting' | 'ready' | 'error'; detail?: string | null; targetRealm?: string | null; progress?: { stage: string; current: number; total: number } };
-type ArmorLeaf = { label: string; subclassIds: number[]; types?: string[]; kind?: 'special' | 'tertiary'; bonusStat?: number };
-type ArmorGroup = { label: string; subclassIds: number[]; leaves: ArmorLeaf[] };
-type SearchState = { query: string; group: string | null; leaf: string | null; bonusStat?: number; subclasses: number[]; inventoryTypes: string[]; expansionId: number | null; minLevel: number | null; maxLevel: number | null; minQuality: number | null; maxQuality: number | null; sort: string; direction: 'asc' | 'desc' };
-type Locale = 'en-US' | 'es-MX';
-
-const collectorUrl = 'http://localhost:3501';
-const pageSize = 500;
-const favoritesStorageKey = 'auction-house-favorites';
-const armorTypes: Record<number, string> = { 1: 'Cloth', 2: 'Leather', 3: 'Mail', 4: 'Plate', 5: 'Cosmetic', 6: 'Shields' };
-const containerTypes: Record<number, string> = { 0: 'General Bags', 2: 'Herb Bags', 3: 'Enchanting Bags', 4: 'Engineering Bags', 5: 'Gem Bags', 6: 'Mining Bags', 7: 'Leatherworking Bags', 8: 'Inscription Bags' };
-const gemTypes: Record<number, string> = { 0: 'Intellect', 1: 'Agility', 2: 'Strength', 3: 'Stamina', 4: 'Spirit', 5: 'Critical Strike', 6: 'Mastery', 7: 'Haste', 8: 'Versatility', 9: 'Other Gems' };
-const enhancementTypes: Record<number, string> = { 0: 'Head', 1: 'Neck', 2: 'Shoulder', 3: 'Cloak', 4: 'Chest', 5: 'Wrist', 6: 'Hands', 7: 'Waist', 8: 'Legs', 9: 'Feet', 10: 'Finger', 11: 'Weapon', 12: 'Two-Handed Weapon', 13: 'Shield / Off-hand', 14: 'Miscellaneous' };
-const consumableTypes: Record<number, string> = { 0: 'Explosives and Devices', 1: 'Potions', 2: 'Elixirs', 3: 'Flasks & Phials', 4: 'Scrolls', 5: 'Food & Drink', 6: 'Item Enhancements', 7: 'Bandages', 8: 'Other Consumables', 9: 'Vantus Runes', 10: 'Utility Curios', 11: 'Combat Curios' };
-const glyphTypes: Record<number, string> = { 1: 'Warrior', 2: 'Paladin', 3: 'Hunter', 4: 'Rogue', 5: 'Priest', 6: 'Death Knight', 7: 'Shaman', 8: 'Mage', 9: 'Warlock', 10: 'Monk', 11: 'Druid', 12: 'Demon Hunter' };
-const tradeGoodTypes: Record<number, string> = { 1: 'Parts', 4: 'Jewelcrafting', 5: 'Cloth', 6: 'Leather', 7: 'Metal & Stone', 8: 'Cooking', 9: 'Herb', 10: 'Elemental', 11: 'Other', 12: 'Enchanting', 16: 'Inscription' };
-const recipeTypes: Record<number, string> = { 0: 'Book', 1: 'Leatherworking', 2: 'Tailoring', 3: 'Engineering', 4: 'Blacksmithing', 5: 'Cooking', 6: 'Alchemy', 7: 'First Aid', 8: 'Enchanting', 9: 'Fishing', 10: 'Jewelcrafting', 11: 'Inscription' };
-const professionEquipmentTypes: Record<number, string> = { 0: 'Blacksmithing', 1: 'Leatherworking', 2: 'Alchemy', 3: 'Herbalism', 4: 'Cooking', 5: 'Mining', 6: 'Tailoring', 7: 'Engineering', 8: 'Enchanting', 9: 'Fishing', 10: 'Skinning', 11: 'Jewelcrafting', 12: 'Inscription', 13: 'Archaeology' };
-const housingTypes: Record<number, string> = { 0: 'Decor' };
-const battlePetTypes: Record<number, string> = { 0: 'Humanoid', 1: 'Dragonkin', 2: 'Flying', 3: 'Undead', 4: 'Critter', 5: 'Magic', 6: 'Elemental', 7: 'Beast', 8: 'Aquatic', 9: 'Mechanical' };
+const armorTypes: Record<number, string> = {
+  1: 'Cloth',
+  2: 'Leather',
+  3: 'Mail',
+  4: 'Plate',
+  5: 'Cosmetic',
+  6: 'Shields',
+};
+const containerTypes: Record<number, string> = {
+  0: 'General Bags',
+  2: 'Herb Bags',
+  3: 'Enchanting Bags',
+  4: 'Engineering Bags',
+  5: 'Gem Bags',
+  6: 'Mining Bags',
+  7: 'Leatherworking Bags',
+  8: 'Inscription Bags',
+};
+const gemTypes: Record<number, string> = {
+  0: 'Intellect',
+  1: 'Agility',
+  2: 'Strength',
+  3: 'Stamina',
+  4: 'Spirit',
+  5: 'Critical Strike',
+  6: 'Mastery',
+  7: 'Haste',
+  8: 'Versatility',
+  9: 'Other Gems',
+};
+const enhancementTypes: Record<number, string> = {
+  0: 'Head',
+  1: 'Neck',
+  2: 'Shoulder',
+  3: 'Cloak',
+  4: 'Chest',
+  5: 'Wrist',
+  6: 'Hands',
+  7: 'Waist',
+  8: 'Legs',
+  9: 'Feet',
+  10: 'Finger',
+  11: 'Weapon',
+  12: 'Two-Handed Weapon',
+  13: 'Shield / Off-hand',
+  14: 'Miscellaneous',
+};
+const consumableTypes: Record<number, string> = {
+  0: 'Explosives and Devices',
+  1: 'Potions',
+  2: 'Elixirs',
+  3: 'Flasks & Phials',
+  4: 'Scrolls',
+  5: 'Food & Drink',
+  6: 'Item Enhancements',
+  7: 'Bandages',
+  8: 'Other Consumables',
+  9: 'Vantus Runes',
+  10: 'Utility Curios',
+  11: 'Combat Curios',
+};
+const glyphTypes: Record<number, string> = {
+  1: 'Warrior',
+  2: 'Paladin',
+  3: 'Hunter',
+  4: 'Rogue',
+  5: 'Priest',
+  6: 'Death Knight',
+  7: 'Shaman',
+  8: 'Mage',
+  9: 'Warlock',
+  10: 'Monk',
+  11: 'Druid',
+  12: 'Demon Hunter',
+};
+const tradeGoodTypes: Record<number, string> = {
+  1: 'Parts',
+  4: 'Jewelcrafting',
+  5: 'Cloth',
+  6: 'Leather',
+  7: 'Metal & Stone',
+  8: 'Cooking',
+  9: 'Herb',
+  10: 'Elemental',
+  11: 'Other',
+  12: 'Enchanting',
+  16: 'Inscription',
+};
+const recipeTypes: Record<number, string> = {
+  0: 'Book',
+  1: 'Leatherworking',
+  2: 'Tailoring',
+  3: 'Engineering',
+  4: 'Blacksmithing',
+  5: 'Cooking',
+  6: 'Alchemy',
+  7: 'First Aid',
+  8: 'Enchanting',
+  9: 'Fishing',
+  10: 'Jewelcrafting',
+  11: 'Inscription',
+};
+const professionEquipmentTypes: Record<number, string> = {
+  0: 'Blacksmithing',
+  1: 'Leatherworking',
+  2: 'Alchemy',
+  3: 'Herbalism',
+  4: 'Cooking',
+  5: 'Mining',
+  6: 'Tailoring',
+  7: 'Engineering',
+  8: 'Enchanting',
+  9: 'Fishing',
+  10: 'Skinning',
+  11: 'Jewelcrafting',
+  12: 'Inscription',
+  13: 'Archaeology',
+};
+const housingTypes: Record<number, string> = { 0: 'Decor', 1: 'Housing Dye' };
+const battlePetTypes: Record<number, string> = {
+  0: 'Humanoid',
+  1: 'Dragonkin',
+  2: 'Flying',
+  3: 'Undead',
+  4: 'Critter',
+  5: 'Magic',
+  6: 'Elemental',
+  7: 'Beast',
+  8: 'Aquatic',
+  9: 'Mechanical',
+};
 const questItemTypes: Record<number, string> = { 0: 'Quest' };
-const miscellaneousTypes: Record<number, string> = { 0: 'Junk', 1: 'Reagent', 2: 'Companion Pets', 3: 'Holiday', 4: 'Other', 5: 'Mount', 6: 'Mount Equipment' };
+const miscellaneousTypes: Record<number, string> = {
+  0: 'Junk',
+  1: 'Reagent',
+  2: 'Companion Pets',
+  3: 'Holiday',
+  4: 'Other',
+  5: 'Mount',
+  6: 'Mount Equipment',
+};
 const wowTokenTypes: Record<number, string> = { 0: 'WoW Token' };
-const statNames: Record<number, string> = { 61: 'Speed', 62: 'Leech', 63: 'Avoidance', 64: 'Indestructible' };
-const expansions = ['Classic', 'The Burning Crusade', 'Wrath of the Lich King', 'Cataclysm', 'Mists of Pandaria', 'Warlords of Draenor', 'Legion', 'Battle for Azeroth', 'Shadowlands', 'Dragonflight', 'The War Within', 'Midnight'];
-const qualities = ['Poor', 'Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Artifact', 'Heirloom'];
-const qualityColors: Record<string, string> = { POOR: '#9d9d9d', COMMON: '#ffffff', UNCOMMON: '#1eff00', RARE: '#0070dd', EPIC: '#a335ee', LEGENDARY: '#ff8000', ARTIFACT: '#e6cc80', HEIRLOOM: '#00ccff' };
-const inventoryTypeSpanishLabels: Record<string, string> = { HEAD: 'Cabeza', NECK: 'Cuello', SHOULDER: 'Hombro', CLOAK: 'Capa', CHEST: 'Pecho', ROBE: 'Toga', WAIST: 'Cintura', LEGS: 'Piernas', FEET: 'Pies', WRIST: 'Muñecas', HANDS: 'Manos', FINGER: 'Dedo', TRINKET: 'Abalorio', HOLDABLE: 'Mano izquierda', SHIELD: 'Escudo', BODY: 'Camisa' };
-const weaponSpanishLabels: Record<string, string> = { 'One-Handed': 'De una mano', 'Two-Handed': 'De dos manos', Ranged: 'A distancia', 'One-Handed Axes': 'Hachas de una mano', 'Two-Handed Axes': 'Hachas de dos manos', 'One-Handed Maces': 'Mazas de una mano', 'Two-Handed Maces': 'Mazas de dos manos', 'One-Handed Swords': 'Espadas de una mano', 'Two-Handed Swords': 'Espadas de dos manos', Warglaives: 'Gujas de guerra', 'Fist Weapons': 'Armas de puño', Daggers: 'Dagas', Polearms: 'Armas de asta', Staves: 'Bastones', Bows: 'Arcos', Guns: 'Armas de fuego', Thrown: 'Arrojadizas', Crossbows: 'Ballestas', Wands: 'Varitas', 'Fishing Poles': 'Cañas de pescar' };
-const tradeGoodSpanishLabels: Record<string, string> = { 'Crafting Materials': 'Materiales de fabricación', 'Profession Materials': 'Materiales de profesión', Parts: 'Componentes', Jewelcrafting: 'Joyería', 'Metal & Stone': 'Metal y piedra', Cooking: 'Cocina', Herb: 'Hierbas', Elemental: 'Elemental', Other: 'Otros', Enchanting: 'Encantamiento', Inscription: 'Inscripción' };
-const professionSpanishLabels: Record<string, string> = { Professions: 'Profesiones', 'Crafting Professions': 'Profesiones de fabricación', 'Gathering Professions': 'Profesiones de recolección', Book: 'Libro', Leatherworking: 'Peletería', Tailoring: 'Sastrería', Engineering: 'Ingeniería', Blacksmithing: 'Herrería', Alchemy: 'Alquimia', Herbalism: 'Herboristería', Mining: 'Minería', 'First Aid': 'Primeros auxilios', Fishing: 'Pesca', Skinning: 'Desuello', Archaeology: 'Arqueología' };
-const specialSpanishLabels: Record<string, string> = { 'Housing Decor': 'Decoración de vivienda', 'All Decor': 'Toda la decoración', Collectibles: 'Coleccionables', 'Battle Pets': 'Mascotas de duelo', Humanoid: 'Humanoide', Dragonkin: 'Dragónido', Flying: 'Volador', Undead: 'No-muerto', Critter: 'Alimaña', Magic: 'Magia', Beast: 'Bestia', Aquatic: 'Acuático', Mechanical: 'Mecánico', Quest: 'Misión', Junk: 'Basura', Reagent: 'Reactivo', 'Companion Pets': 'Mascotas de compañía', Holiday: 'Festividad', Mount: 'Montura', 'Mount Equipment': 'Equipo de montura', 'WoW Token': 'Ficha de WoW' };
-const spanishLabels: Record<string, string> = { Weapons: 'Armas', Armor: 'Armadura', Plate: 'Placas', Mail: 'Malla', Leather: 'Cuero', Cloth: 'Tela', Miscellaneous: 'Miscelánea', Cosmetic: 'Cosmético', Containers: 'Contenedores', Gems: 'Gemas', Decor: 'Decoración', 'Primary Stats': 'Estadísticas primarias', 'Secondary Stats': 'Estadísticas secundarias', Intellect: 'Intelecto', Agility: 'Agilidad', Strength: 'Fuerza', Stamina: 'Aguante', Spirit: 'Espíritu', 'Critical Strike': 'Golpe crítico', Mastery: 'Maestría', Haste: 'Celeridad', Versatility: 'Versatilidad', 'Other Gems': 'Otras gemas', 'Equipment Slots': 'Ranuras de equipo', 'Weapon Slots': 'Ranuras de arma', Weapon: 'Arma', 'Two-Handed Weapon': 'Arma de dos manos', 'Shield / Off-hand': 'Escudo / mano izquierda', 'Explosives and Devices': 'Explosivos y dispositivos', Potions: 'Pociones', Elixirs: 'Elixires', 'Flasks & Phials': 'Frascos y viales', Scrolls: 'Pergaminos', 'Food & Drink': 'Comida y bebida', Bandages: 'Vendajes', 'Other Consumables': 'Otros consumibles', 'Vantus Runes': 'Runas Vantus', 'Utility Curios': 'Curiosidades de utilidad', 'Combat Curios': 'Curiosidades de combate', Warrior: 'Guerrero', Paladin: 'Paladín', Hunter: 'Cazador', Rogue: 'Pícaro', Priest: 'Sacerdote', 'Death Knight': 'Caballero de la Muerte', Shaman: 'Chamán', Mage: 'Mago', Warlock: 'Brujo', Monk: 'Monje', Druid: 'Druida', 'Demon Hunter': 'Cazador de demonios', 'Item Enhancements': 'Mejoras de objetos', Consumables: 'Consumibles', Glyphs: 'Glifos', 'Trade Goods': 'Componentes', Recipes: 'Recetas', 'Profession Equipment': 'Equipo de profesión', Housing: 'Viviendas', 'Battle Pets': 'Mascotas de duelo', 'Quest Items': 'Objetos de misión', Head: 'Cabeza', Neck: 'Cuello', Shoulder: 'Hombro', Cloak: 'Capa', Chest: 'Pecho', Waist: 'Cintura', Legs: 'Piernas', Feet: 'Pies', Wrist: 'Muñecas', Hands: 'Manos', Shields: 'Escudos', Back: 'Espalda', Finger: 'Dedo', Trinket: 'Abalorio', 'Held In Off-hand': 'Mano izquierda', Shirt: 'Camisa', HOLDABLE: 'Sujetable con la mano izquierda', Speed: 'Velocidad', Leech: 'Robo de vida', Avoidance: 'Evasión', Indestructible: 'Indestructible', Runecarving: 'Tallado rúnico', Poor: 'Pobre', Common: 'Común', Uncommon: 'Inusual', Rare: 'Raro', Epic: 'Épico', Legendary: 'Legendario', Artifact: 'Artefacto', Heirloom: 'Reliquia' };
+const inventoryTypeSpanishLabels: Record<string, string> = {
+  HEAD: 'Cabeza',
+  NECK: 'Cuello',
+  SHOULDER: 'Hombro',
+  CLOAK: 'Capa',
+  CHEST: 'Pecho',
+  ROBE: 'Toga',
+  WAIST: 'Cintura',
+  LEGS: 'Piernas',
+  FEET: 'Pies',
+  WRIST: 'Muñecas',
+  HANDS: 'Manos',
+  FINGER: 'Dedo',
+  TRINKET: 'Abalorio',
+  HOLDABLE: 'Mano izquierda',
+  SHIELD: 'Escudo',
+  BODY: 'Camisa',
+};
+const weaponSpanishLabels: Record<string, string> = {
+  'One-Handed': 'De una mano',
+  'Two-Handed': 'De dos manos',
+  Ranged: 'A distancia',
+  'One-Handed Axes': 'Hachas de una mano',
+  'Two-Handed Axes': 'Hachas de dos manos',
+  'One-Handed Maces': 'Mazas de una mano',
+  'Two-Handed Maces': 'Mazas de dos manos',
+  'One-Handed Swords': 'Espadas de una mano',
+  'Two-Handed Swords': 'Espadas de dos manos',
+  Warglaives: 'Gujas de guerra',
+  'Fist Weapons': 'Armas de puño',
+  Daggers: 'Dagas',
+  Polearms: 'Armas de asta',
+  Staves: 'Bastones',
+  Bows: 'Arcos',
+  Guns: 'Armas de fuego',
+  Thrown: 'Arrojadizas',
+  Crossbows: 'Ballestas',
+  Wands: 'Varitas',
+  'Fishing Poles': 'Cañas de pescar',
+};
+const tradeGoodSpanishLabels: Record<string, string> = {
+  'Crafting Materials': 'Materiales de fabricación',
+  'Profession Materials': 'Materiales de profesión',
+  Parts: 'Componentes',
+  Jewelcrafting: 'Joyería',
+  'Metal & Stone': 'Metal y piedra',
+  Cooking: 'Cocina',
+  Herb: 'Hierbas',
+  Elemental: 'Elemental',
+  Other: 'Otros',
+  Enchanting: 'Encantamiento',
+  Inscription: 'Inscripción',
+};
+const professionSpanishLabels: Record<string, string> = {
+  Professions: 'Profesiones',
+  'Crafting Professions': 'Profesiones de fabricación',
+  'Gathering Professions': 'Profesiones de recolección',
+  Book: 'Libro',
+  Leatherworking: 'Peletería',
+  Tailoring: 'Sastrería',
+  Engineering: 'Ingeniería',
+  Blacksmithing: 'Herrería',
+  Alchemy: 'Alquimia',
+  Herbalism: 'Herboristería',
+  Mining: 'Minería',
+  'First Aid': 'Primeros auxilios',
+  Fishing: 'Pesca',
+  Skinning: 'Desuello',
+  Archaeology: 'Arqueología',
+};
+const specialSpanishLabels: Record<string, string> = {
+  'Housing Decor': 'Decoración',
+  'All Decor': 'Toda la decoración',
+  'Housing Dye': 'Tintes de vivienda',
+  Collectibles: 'Coleccionables',
+  'Battle Pets': 'Mascotas de duelo',
+  Humanoid: 'Humanoide',
+  Dragonkin: 'Dragónido',
+  Flying: 'Volador',
+  Undead: 'No-muerto',
+  Critter: 'Alimaña',
+  Magic: 'Magia',
+  Beast: 'Bestia',
+  Aquatic: 'Acuático',
+  Mechanical: 'Mecánico',
+  Quest: 'Misión',
+  Junk: 'Basura',
+  Reagent: 'Reactivo',
+  'Companion Pets': 'Mascotas de compañía',
+  Holiday: 'Festividad',
+  Mount: 'Montura',
+  'Mount Equipment': 'Equipo de montura',
+  'WoW Token': 'Ficha de WoW',
+};
+const navigationSpanishLabels: Record<string, string> = {
+  Bags: 'Bolsas',
+  'General Bags': 'Bolsas generales',
+  'Profession Bags': 'Bolsas de profesión',
+  'Herb Bags': 'Bolsas de herboristería',
+  'Enchanting Bags': 'Bolsas de encantamiento',
+  'Engineering Bags': 'Bolsas de ingeniería',
+  'Gem Bags': 'Bolsas de gemas',
+  'Mining Bags': 'Bolsas de minería',
+  'Leatherworking Bags': 'Bolsas de peletería',
+  'Inscription Bags': 'Bolsas de inscripción',
+  Combat: 'Combate',
+  Utility: 'Utilidad',
+  'General Goods': 'Mercancías generales',
+  'Companion Pets': 'Mascotas de compañía',
+  'Mount Equipment': 'Equipo de montura',
+};
+const spanishLabels: Record<string, string> = {
+  Weapons: 'Armas',
+  Armor: 'Armadura',
+  Plate: 'Placas',
+  Mail: 'Malla',
+  Leather: 'Cuero',
+  Cloth: 'Tela',
+  Miscellaneous: 'Miscelánea',
+  Cosmetic: 'Cosmético',
+  Containers: 'Contenedores',
+  Gems: 'Gemas',
+  Decor: 'Decoración',
+  'Primary Stats': 'Estadísticas primarias',
+  'Secondary Stats': 'Estadísticas secundarias',
+  Intellect: 'Intelecto',
+  Agility: 'Agilidad',
+  Strength: 'Fuerza',
+  Stamina: 'Aguante',
+  Spirit: 'Espíritu',
+  'Critical Strike': 'Golpe crítico',
+  Mastery: 'Maestría',
+  Haste: 'Celeridad',
+  Versatility: 'Versatilidad',
+  'Other Gems': 'Otras gemas',
+  'Equipment Slots': 'Ranuras de equipo',
+  'Weapon Slots': 'Ranuras de arma',
+  Weapon: 'Arma',
+  'Two-Handed Weapon': 'Arma de dos manos',
+  'Shield / Off-hand': 'Escudo / mano izquierda',
+  'Explosives and Devices': 'Explosivos y dispositivos',
+  Potions: 'Pociones',
+  Elixirs: 'Elixires',
+  'Flasks & Phials': 'Frascos y viales',
+  Scrolls: 'Pergaminos',
+  'Food & Drink': 'Comida y bebida',
+  Bandages: 'Vendajes',
+  'Other Consumables': 'Otros consumibles',
+  'Vantus Runes': 'Runas Vantus',
+  'Utility Curios': 'Curiosidades de utilidad',
+  'Combat Curios': 'Curiosidades de combate',
+  Warrior: 'Guerrero',
+  Paladin: 'Paladín',
+  Hunter: 'Cazador',
+  Rogue: 'Pícaro',
+  Priest: 'Sacerdote',
+  'Death Knight': 'Caballero de la Muerte',
+  Shaman: 'Chamán',
+  Mage: 'Mago',
+  Warlock: 'Brujo',
+  Monk: 'Monje',
+  Druid: 'Druida',
+  'Demon Hunter': 'Cazador de demonios',
+  'Item Enhancements': 'Mejoras de objetos',
+  Consumables: 'Consumibles',
+  Glyphs: 'Glifos',
+  'Trade Goods': 'Componentes',
+  Recipes: 'Recetas',
+  'Profession Equipment': 'Equipo de profesión',
+  Housing: 'Viviendas',
+  'Battle Pets': 'Mascotas de duelo',
+  'Quest Items': 'Objetos de misión',
+  Head: 'Cabeza',
+  Neck: 'Cuello',
+  Shoulder: 'Hombro',
+  Cloak: 'Capa',
+  Chest: 'Pecho',
+  Waist: 'Cintura',
+  Legs: 'Piernas',
+  Feet: 'Pies',
+  Wrist: 'Muñecas',
+  Hands: 'Manos',
+  Shields: 'Escudos',
+  Back: 'Espalda',
+  Finger: 'Dedo',
+  Trinket: 'Abalorio',
+  'Held In Off-hand': 'Mano izquierda',
+  Shirt: 'Camisa',
+  HOLDABLE: 'Sujetable con la mano izquierda',
+  Speed: 'Velocidad',
+  Leech: 'Robo de vida',
+  Avoidance: 'Evasión',
+  Indestructible: 'Indestructible',
+  Runecarving: 'Tallado rúnico',
+  Poor: 'Pobre',
+  Common: 'Común',
+  Uncommon: 'Inusual',
+  Rare: 'Raro',
+  Epic: 'Épico',
+  Legendary: 'Legendario',
+  Artifact: 'Artefacto',
+  Heirloom: 'Reliquia',
+};
 const uiCopy = {
-  'en-US': { search: 'Search', filter: 'Filter', apply: 'Apply', reset: 'Reset', levelRange: 'Level Range', rarity: 'Rarity', era: 'Era', any: 'Any', item: 'Item', unitPrice: 'Unit Price', available: 'Available', auctions: 'Auctions', noResults: 'No results found.', searchPrompt: 'Choose filters or enter an item name, then press Search.', previous: 'Previous', next: 'Next', results: 'results', loading: 'Loading…', loadingItem: 'Loading item…', back: 'Back', updated: 'updated', baseStats: 'Base Stats', current: 'Current', variants: 'Variants', bulkPricing: 'Bulk Pricing', quantity: 'Quantity', totalPrice: 'Total Price', priceHistory: 'Price History', low: 'Low', median: 'Median', high: 'High', change: 'Change', bonuses: 'bonuses', days: 'days', year: 'year', home: 'Home', terms: 'Terms', privacy: 'Privacy', api: 'API' },
-  'es-MX': { search: 'Buscar', filter: 'Filtro', apply: 'Aplicar', reset: 'Restablecer', levelRange: 'Rango de nivel', rarity: 'Rareza', era: 'Expansión', any: 'Cualquiera', item: 'Objeto', unitPrice: 'Precio unitario', available: 'Disponible', auctions: 'Subastas', noResults: 'No se encontraron resultados.', searchPrompt: 'Elige filtros o escribe un objeto y pulsa Buscar.', previous: 'Anterior', next: 'Siguiente', results: 'resultados', loading: 'Cargando…', loadingItem: 'Cargando objeto…', back: 'Volver', updated: 'actualizado', baseStats: 'Estadísticas base', current: 'Actual', variants: 'Variantes', bulkPricing: 'Precio por cantidad', quantity: 'Cantidad', totalPrice: 'Precio total', priceHistory: 'Historial de precios', low: 'Mínimo', median: 'Mediana', high: 'Máximo', change: 'Cambio', bonuses: 'bonus', days: 'días', year: 'año', home: 'Inicio', terms: 'Términos', privacy: 'Privacidad', api: 'API' },
+  'en-US': {
+    search: 'Search',
+    filter: 'Filter',
+    apply: 'Apply',
+    reset: 'Reset',
+    levelRange: 'Level Range',
+    rarity: 'Rarity',
+    era: 'Era',
+    any: 'Any',
+    item: 'Item',
+    unitPrice: 'Unit Price',
+    available: 'Available',
+    auctions: 'Auctions',
+    noResults: 'No results found.',
+    searchPrompt: 'Choose filters or enter an item name, then press Search.',
+    previous: 'Previous',
+    next: 'Next',
+    results: 'results',
+    loading: 'Loading…',
+    loadingItem: 'Loading item…',
+    back: 'Back',
+    updated: 'updated',
+    baseStats: 'Base Stats',
+    current: 'Current',
+    variants: 'Variants',
+    bulkPricing: 'Bulk Pricing',
+    quantity: 'Quantity',
+    totalPrice: 'Total Price',
+    priceHistory: 'Price History',
+    low: 'Low',
+    median: 'Median',
+    high: 'High',
+    change: 'Change',
+    bonuses: 'bonuses',
+    days: 'days',
+    year: 'year',
+    home: 'Home',
+    terms: 'Terms',
+    privacy: 'Privacy',
+    api: 'API',
+  },
+  'es-MX': {
+    search: 'Buscar',
+    filter: 'Filtro',
+    apply: 'Aplicar',
+    reset: 'Restablecer',
+    levelRange: 'Rango de nivel',
+    rarity: 'Rareza',
+    era: 'Expansión',
+    any: 'Cualquiera',
+    item: 'Objeto',
+    unitPrice: 'Precio unitario',
+    available: 'Disponible',
+    auctions: 'Subastas',
+    noResults: 'No se encontraron resultados.',
+    searchPrompt: 'Elige filtros o escribe un objeto y pulsa Buscar.',
+    previous: 'Anterior',
+    next: 'Siguiente',
+    results: 'resultados',
+    loading: 'Cargando…',
+    loadingItem: 'Cargando objeto…',
+    back: 'Volver',
+    updated: 'actualizado',
+    baseStats: 'Estadísticas base',
+    current: 'Actual',
+    variants: 'Variantes',
+    bulkPricing: 'Precio por cantidad',
+    quantity: 'Cantidad',
+    totalPrice: 'Precio total',
+    priceHistory: 'Historial de precios',
+    low: 'Mínimo',
+    median: 'Mediana',
+    high: 'Máximo',
+    change: 'Cambio',
+    bonuses: 'bonus',
+    days: 'días',
+    year: 'año',
+    home: 'Inicio',
+    terms: 'Términos',
+    privacy: 'Privacidad',
+    api: 'API',
+  },
 } as const;
 const standardLeaves: ArmorLeaf[] = [
-  { label: 'Runecarving', subclassIds: [], kind: 'special' }, { label: 'Head', subclassIds: [], types: ['HEAD'] },
-  { label: 'Shoulder', subclassIds: [], types: ['SHOULDER'] }, { label: 'Chest', subclassIds: [], types: ['CHEST', 'ROBE'] },
-  { label: 'Waist', subclassIds: [], types: ['WAIST'] }, { label: 'Legs', subclassIds: [], types: ['LEGS'] },
-  { label: 'Feet', subclassIds: [], types: ['FEET'] }, { label: 'Wrist', subclassIds: [], types: ['WRIST'] }, { label: 'Hands', subclassIds: [], types: ['HANDS'] },
-  { label: 'Speed', subclassIds: [], kind: 'tertiary', bonusStat: 61 }, { label: 'Leech', subclassIds: [], kind: 'tertiary', bonusStat: 62 },
-  { label: 'Avoidance', subclassIds: [], kind: 'tertiary', bonusStat: 63 }, { label: 'Indestructible', subclassIds: [], kind: 'tertiary', bonusStat: 64 },
+  { label: 'Runecarving', subclassIds: [], kind: 'special' },
+  { label: 'Head', subclassIds: [], types: ['HEAD'] },
+  { label: 'Shoulder', subclassIds: [], types: ['SHOULDER'] },
+  { label: 'Chest', subclassIds: [], types: ['CHEST', 'ROBE'] },
+  { label: 'Waist', subclassIds: [], types: ['WAIST'] },
+  { label: 'Legs', subclassIds: [], types: ['LEGS'] },
+  { label: 'Feet', subclassIds: [], types: ['FEET'] },
+  { label: 'Wrist', subclassIds: [], types: ['WRIST'] },
+  { label: 'Hands', subclassIds: [], types: ['HANDS'] },
+  { label: 'Speed', subclassIds: [], kind: 'tertiary', bonusStat: 61 },
+  { label: 'Leech', subclassIds: [], kind: 'tertiary', bonusStat: 62 },
+  { label: 'Avoidance', subclassIds: [], kind: 'tertiary', bonusStat: 63 },
+  { label: 'Indestructible', subclassIds: [], kind: 'tertiary', bonusStat: 64 },
 ];
-const leavesFor = (id: number) => standardLeaves.map((leaf) => ({ ...leaf, subclassIds: [id] }));
+const leavesFor = (id: number) =>
+  standardLeaves.map((leaf) => ({ ...leaf, subclassIds: [id] }));
 const armorGroups: ArmorGroup[] = [
-  { label: 'Plate', subclassIds: [4], leaves: leavesFor(4) }, { label: 'Mail', subclassIds: [3], leaves: leavesFor(3) },
-  { label: 'Leather', subclassIds: [2], leaves: leavesFor(2) }, { label: 'Cloth', subclassIds: [1], leaves: leavesFor(1) },
-  { label: 'Miscellaneous', subclassIds: [0], leaves: [
-    { label: 'Runecarving', subclassIds: [0], kind: 'special' }, { label: 'Neck', subclassIds: [0], types: ['NECK'] },
-    { label: 'Back', subclassIds: [1], types: ['CLOAK'] }, { label: 'Finger', subclassIds: [0], types: ['FINGER'] },
-    { label: 'Trinket', subclassIds: [0], types: ['TRINKET'] }, { label: 'Held In Off-hand', subclassIds: [0], types: ['HOLDABLE'] },
-    { label: 'Shields', subclassIds: [6] }, { label: 'Shirt', subclassIds: [0], types: ['BODY'] }, { label: 'Head', subclassIds: [0], types: ['HEAD'] },
-    { label: 'Speed', subclassIds: [0, 6], kind: 'tertiary', bonusStat: 61 }, { label: 'Leech', subclassIds: [0, 6], kind: 'tertiary', bonusStat: 62 },
-    { label: 'Avoidance', subclassIds: [0, 6], kind: 'tertiary', bonusStat: 63 }, { label: 'Indestructible', subclassIds: [0, 6], kind: 'tertiary', bonusStat: 64 },
-  ] }, { label: 'Cosmetic', subclassIds: [5], leaves: [] },
+  { label: 'Plate', subclassIds: [4], leaves: leavesFor(4) },
+  { label: 'Mail', subclassIds: [3], leaves: leavesFor(3) },
+  { label: 'Leather', subclassIds: [2], leaves: leavesFor(2) },
+  { label: 'Cloth', subclassIds: [1], leaves: leavesFor(1) },
+  {
+    label: 'Miscellaneous',
+    subclassIds: [0],
+    leaves: [
+      { label: 'Runecarving', subclassIds: [0], kind: 'special' },
+      { label: 'Neck', subclassIds: [0], types: ['NECK'] },
+      { label: 'Back', subclassIds: [1], types: ['CLOAK'] },
+      { label: 'Finger', subclassIds: [0], types: ['FINGER'] },
+      { label: 'Trinket', subclassIds: [0], types: ['TRINKET'] },
+      { label: 'Held In Off-hand', subclassIds: [0], types: ['HOLDABLE'] },
+      { label: 'Shields', subclassIds: [6] },
+      { label: 'Shirt', subclassIds: [0], types: ['BODY'] },
+      { label: 'Head', subclassIds: [0], types: ['HEAD'] },
+      { label: 'Speed', subclassIds: [0, 6], kind: 'tertiary', bonusStat: 61 },
+      { label: 'Leech', subclassIds: [0, 6], kind: 'tertiary', bonusStat: 62 },
+      {
+        label: 'Avoidance',
+        subclassIds: [0, 6],
+        kind: 'tertiary',
+        bonusStat: 63,
+      },
+      {
+        label: 'Indestructible',
+        subclassIds: [0, 6],
+        kind: 'tertiary',
+        bonusStat: 64,
+      },
+    ],
+  },
+  { label: 'Cosmetic', subclassIds: [5], leaves: [] },
 ];
 const weaponGroups: ArmorGroup[] = [
-  { label: 'One-Handed', subclassIds: [0, 4, 7, 9, 13, 15], leaves: [
-    { label: 'One-Handed Axes', subclassIds: [0] }, { label: 'One-Handed Maces', subclassIds: [4] }, { label: 'One-Handed Swords', subclassIds: [7] }, { label: 'Warglaives', subclassIds: [9] }, { label: 'Fist Weapons', subclassIds: [13] }, { label: 'Daggers', subclassIds: [15] },
-    { label: 'Speed', subclassIds: [0, 4, 7, 9, 13, 15], kind: 'tertiary', bonusStat: 61 }, { label: 'Leech', subclassIds: [0, 4, 7, 9, 13, 15], kind: 'tertiary', bonusStat: 62 }, { label: 'Avoidance', subclassIds: [0, 4, 7, 9, 13, 15], kind: 'tertiary', bonusStat: 63 }, { label: 'Indestructible', subclassIds: [0, 4, 7, 9, 13, 15], kind: 'tertiary', bonusStat: 64 },
-  ] },
-  { label: 'Two-Handed', subclassIds: [1, 5, 6, 8, 10], leaves: [{ label: 'Two-Handed Axes', subclassIds: [1] }, { label: 'Two-Handed Maces', subclassIds: [5] }, { label: 'Polearms', subclassIds: [6] }, { label: 'Two-Handed Swords', subclassIds: [8] }, { label: 'Staves', subclassIds: [10] }] },
-  { label: 'Ranged', subclassIds: [2, 3, 16, 18, 19], leaves: [{ label: 'Bows', subclassIds: [2] }, { label: 'Guns', subclassIds: [3] }, { label: 'Thrown', subclassIds: [16] }, { label: 'Crossbows', subclassIds: [18] }, { label: 'Wands', subclassIds: [19] }] },
-  { label: 'Miscellaneous', subclassIds: [11, 12, 14, 20], leaves: [{ label: 'Fishing Poles', subclassIds: [20] }, { label: 'Miscellaneous', subclassIds: [11, 12, 14] }] },
+  {
+    label: 'One-Handed',
+    subclassIds: [0, 4, 7, 9, 13, 15],
+    leaves: [
+      { label: 'One-Handed Axes', subclassIds: [0] },
+      { label: 'One-Handed Maces', subclassIds: [4] },
+      { label: 'One-Handed Swords', subclassIds: [7] },
+      { label: 'Warglaives', subclassIds: [9] },
+      { label: 'Fist Weapons', subclassIds: [13] },
+      { label: 'Daggers', subclassIds: [15] },
+      {
+        label: 'Speed',
+        subclassIds: [0, 4, 7, 9, 13, 15],
+        kind: 'tertiary',
+        bonusStat: 61,
+      },
+      {
+        label: 'Leech',
+        subclassIds: [0, 4, 7, 9, 13, 15],
+        kind: 'tertiary',
+        bonusStat: 62,
+      },
+      {
+        label: 'Avoidance',
+        subclassIds: [0, 4, 7, 9, 13, 15],
+        kind: 'tertiary',
+        bonusStat: 63,
+      },
+      {
+        label: 'Indestructible',
+        subclassIds: [0, 4, 7, 9, 13, 15],
+        kind: 'tertiary',
+        bonusStat: 64,
+      },
+    ],
+  },
+  {
+    label: 'Two-Handed',
+    subclassIds: [1, 5, 6, 8, 10],
+    leaves: [
+      { label: 'Two-Handed Axes', subclassIds: [1] },
+      { label: 'Two-Handed Maces', subclassIds: [5] },
+      { label: 'Polearms', subclassIds: [6] },
+      { label: 'Two-Handed Swords', subclassIds: [8] },
+      { label: 'Staves', subclassIds: [10] },
+    ],
+  },
+  {
+    label: 'Ranged',
+    subclassIds: [2, 3, 16, 18, 19],
+    leaves: [
+      { label: 'Bows', subclassIds: [2] },
+      { label: 'Guns', subclassIds: [3] },
+      { label: 'Thrown', subclassIds: [16] },
+      { label: 'Crossbows', subclassIds: [18] },
+      { label: 'Wands', subclassIds: [19] },
+    ],
+  },
+  {
+    label: 'Miscellaneous',
+    subclassIds: [11, 12, 14, 20],
+    leaves: [
+      { label: 'Fishing Poles', subclassIds: [20] },
+      { label: 'Miscellaneous', subclassIds: [11, 12, 14] },
+    ],
+  },
 ];
-const containerGroups: ArmorGroup[] = [{ label: 'Bags', subclassIds: [0], leaves: [{ label: 'General Bags', subclassIds: [0] }] }, { label: 'Profession Bags', subclassIds: [2, 3, 4, 5, 6, 7, 8], leaves: [{ label: 'Herb Bags', subclassIds: [2] }, { label: 'Enchanting Bags', subclassIds: [3] }, { label: 'Engineering Bags', subclassIds: [4] }, { label: 'Gem Bags', subclassIds: [5] }, { label: 'Mining Bags', subclassIds: [6] }, { label: 'Leatherworking Bags', subclassIds: [7] }, { label: 'Inscription Bags', subclassIds: [8] }] }];
-const gemGroups: ArmorGroup[] = [{ label: 'Primary Stats', subclassIds: [0, 1, 2, 3, 4], leaves: [{ label: 'Intellect', subclassIds: [0] }, { label: 'Agility', subclassIds: [1] }, { label: 'Strength', subclassIds: [2] }, { label: 'Stamina', subclassIds: [3] }, { label: 'Spirit', subclassIds: [4] }] }, { label: 'Secondary Stats', subclassIds: [5, 6, 7, 8, 9], leaves: [{ label: 'Critical Strike', subclassIds: [5] }, { label: 'Mastery', subclassIds: [6] }, { label: 'Haste', subclassIds: [7] }, { label: 'Versatility', subclassIds: [8] }, { label: 'Other Gems', subclassIds: [9] }] }];
+const containerGroups: ArmorGroup[] = [
+  {
+    label: 'Bags',
+    subclassIds: [0],
+    leaves: [{ label: 'General Bags', subclassIds: [0] }],
+  },
+  {
+    label: 'Profession Bags',
+    subclassIds: [2, 3, 4, 5, 6, 7, 8],
+    leaves: [
+      { label: 'Herb Bags', subclassIds: [2] },
+      { label: 'Enchanting Bags', subclassIds: [3] },
+      { label: 'Engineering Bags', subclassIds: [4] },
+      { label: 'Gem Bags', subclassIds: [5] },
+      { label: 'Mining Bags', subclassIds: [6] },
+      { label: 'Leatherworking Bags', subclassIds: [7] },
+      { label: 'Inscription Bags', subclassIds: [8] },
+    ],
+  },
+];
+const gemGroups: ArmorGroup[] = [
+  {
+    label: 'Primary Stats',
+    subclassIds: [0, 1, 2, 3, 4],
+    leaves: [
+      { label: 'Intellect', subclassIds: [0] },
+      { label: 'Agility', subclassIds: [1] },
+      { label: 'Strength', subclassIds: [2] },
+      { label: 'Stamina', subclassIds: [3] },
+      { label: 'Spirit', subclassIds: [4] },
+    ],
+  },
+  {
+    label: 'Secondary Stats',
+    subclassIds: [5, 6, 7, 8, 9],
+    leaves: [
+      { label: 'Critical Strike', subclassIds: [5] },
+      { label: 'Mastery', subclassIds: [6] },
+      { label: 'Haste', subclassIds: [7] },
+      { label: 'Versatility', subclassIds: [8] },
+      { label: 'Other Gems', subclassIds: [9] },
+    ],
+  },
+];
 const enhancementGroups: ArmorGroup[] = [
-  { label: 'Equipment Slots', subclassIds: Array.from({ length: 11 }, (_, id) => id), leaves: Object.entries(enhancementTypes).slice(0, 11).map(([id, label]) => ({ label, subclassIds: [Number(id)] })) },
-  { label: 'Weapon Slots', subclassIds: [11, 12, 13], leaves: Object.entries(enhancementTypes).slice(11, 14).map(([id, label]) => ({ label, subclassIds: [Number(id)] })) },
-  { label: 'Miscellaneous', subclassIds: [14], leaves: [{ label: 'Miscellaneous', subclassIds: [14] }] },
+  {
+    label: 'Equipment Slots',
+    subclassIds: Array.from({ length: 11 }, (_, id) => id),
+    leaves: Object.entries(enhancementTypes)
+      .slice(0, 11)
+      .map(([id, label]) => ({ label, subclassIds: [Number(id)] })),
+  },
+  {
+    label: 'Weapon Slots',
+    subclassIds: [11, 12, 13],
+    leaves: Object.entries(enhancementTypes)
+      .slice(11, 14)
+      .map(([id, label]) => ({ label, subclassIds: [Number(id)] })),
+  },
+  {
+    label: 'Miscellaneous',
+    subclassIds: [14],
+    leaves: [{ label: 'Miscellaneous', subclassIds: [14] }],
+  },
 ];
 const consumableGroups: ArmorGroup[] = [
-  { label: 'Combat', subclassIds: [1, 2, 3, 9, 11], leaves: [1, 2, 3, 9, 11].map((id) => ({ label: consumableTypes[id], subclassIds: [id] })) },
-  { label: 'Utility', subclassIds: [0, 4, 5, 6, 7, 8, 10], leaves: [0, 4, 5, 6, 7, 8, 10].map((id) => ({ label: consumableTypes[id], subclassIds: [id] })) },
+  {
+    label: 'Combat',
+    subclassIds: [1, 2, 3, 9, 11],
+    leaves: [1, 2, 3, 9, 11].map((id) => ({
+      label: consumableTypes[id],
+      subclassIds: [id],
+    })),
+  },
+  {
+    label: 'Utility',
+    subclassIds: [0, 4, 5, 6, 7, 8, 10],
+    leaves: [0, 4, 5, 6, 7, 8, 10].map((id) => ({
+      label: consumableTypes[id],
+      subclassIds: [id],
+    })),
+  },
 ];
-const glyphGroups: ArmorGroup[] = [{ label: 'Glyphs', subclassIds: Object.keys(glyphTypes).map(Number), leaves: Object.entries(glyphTypes).map(([id, label]) => ({ label, subclassIds: [Number(id)] })) }];
+const glyphGroups: ArmorGroup[] = [
+  {
+    label: 'Glyphs',
+    subclassIds: Object.keys(glyphTypes).map(Number),
+    leaves: Object.entries(glyphTypes).map(([id, label]) => ({
+      label,
+      subclassIds: [Number(id)],
+    })),
+  },
+];
 const tradeGoodsGroups: ArmorGroup[] = [
-  { label: 'Crafting Materials', subclassIds: [5, 6, 7, 8, 9, 10], leaves: [5, 6, 7, 8, 9, 10].map((id) => ({ label: tradeGoodTypes[id], subclassIds: [id] })) },
-  { label: 'Profession Materials', subclassIds: [1, 4, 11, 12, 16], leaves: [1, 4, 11, 12, 16].map((id) => ({ label: tradeGoodTypes[id], subclassIds: [id] })) },
+  {
+    label: 'Crafting Materials',
+    subclassIds: [5, 6, 7, 8, 9, 10],
+    leaves: [5, 6, 7, 8, 9, 10].map((id) => ({
+      label: tradeGoodTypes[id],
+      subclassIds: [id],
+    })),
+  },
+  {
+    label: 'Profession Materials',
+    subclassIds: [1, 4, 11, 12, 16],
+    leaves: [1, 4, 11, 12, 16].map((id) => ({
+      label: tradeGoodTypes[id],
+      subclassIds: [id],
+    })),
+  },
 ];
 const recipeGroups: ArmorGroup[] = [
-  { label: 'Professions', subclassIds: Array.from({ length: 11 }, (_, id) => id + 1), leaves: Object.entries(recipeTypes).slice(1).map(([id, label]) => ({ label, subclassIds: [Number(id)] })) },
-  { label: 'Miscellaneous', subclassIds: [0], leaves: [{ label: 'Book', subclassIds: [0] }] },
+  {
+    label: 'Professions',
+    subclassIds: Array.from({ length: 11 }, (_, id) => id + 1),
+    leaves: Object.entries(recipeTypes)
+      .slice(1)
+      .map(([id, label]) => ({ label, subclassIds: [Number(id)] })),
+  },
+  {
+    label: 'Miscellaneous',
+    subclassIds: [0],
+    leaves: [{ label: 'Book', subclassIds: [0] }],
+  },
 ];
 const professionEquipmentGroups: ArmorGroup[] = [
-  { label: 'Crafting Professions', subclassIds: [0, 1, 2, 4, 6, 7, 8, 11, 12], leaves: [0, 1, 2, 4, 6, 7, 8, 11, 12].map((id) => ({ label: professionEquipmentTypes[id], subclassIds: [id] })) },
-  { label: 'Gathering Professions', subclassIds: [3, 5, 9, 10, 13], leaves: [3, 5, 9, 10, 13].map((id) => ({ label: professionEquipmentTypes[id], subclassIds: [id] })) },
+  {
+    label: 'Crafting Professions',
+    subclassIds: [0, 1, 2, 4, 6, 7, 8, 11, 12],
+    leaves: [0, 1, 2, 4, 6, 7, 8, 11, 12].map((id) => ({
+      label: professionEquipmentTypes[id],
+      subclassIds: [id],
+    })),
+  },
+  {
+    label: 'Gathering Professions',
+    subclassIds: [3, 5, 9, 10, 13],
+    leaves: [3, 5, 9, 10, 13].map((id) => ({
+      label: professionEquipmentTypes[id],
+      subclassIds: [id],
+    })),
+  },
 ];
-const housingGroups: ArmorGroup[] = [{ label: 'Housing Decor', subclassIds: [0], leaves: [{ label: 'All Decor', subclassIds: [0] }] }];
-const battlePetGroups: ArmorGroup[] = [{ label: 'Battle Pets', subclassIds: Object.keys(battlePetTypes).map(Number), leaves: Object.entries(battlePetTypes).map(([id, label]) => ({ label, subclassIds: [Number(id)] })) }];
-const questItemGroups: ArmorGroup[] = [{ label: 'Quest Items', subclassIds: [0], leaves: [{ label: 'Quest', subclassIds: [0] }] }];
+const housingGroups: ArmorGroup[] = [
+  {
+    label: 'Housing Decor',
+    subclassIds: [0, 1],
+    leaves: [
+      { label: 'All Decor', subclassIds: [0] },
+      { label: 'Housing Dye', subclassIds: [1] },
+    ],
+  },
+];
+const battlePetGroups: ArmorGroup[] = [
+  {
+    label: 'Battle Pets',
+    subclassIds: Object.keys(battlePetTypes).map(Number),
+    leaves: Object.entries(battlePetTypes).map(([id, label]) => ({
+      label,
+      subclassIds: [Number(id)],
+    })),
+  },
+];
+const questItemGroups: ArmorGroup[] = [
+  {
+    label: 'Quest Items',
+    subclassIds: [0],
+    leaves: [{ label: 'Quest', subclassIds: [0] }],
+  },
+];
 const miscellaneousGroups: ArmorGroup[] = [
-  { label: 'Collectibles', subclassIds: [2, 3, 5, 6], leaves: [2, 3, 5, 6].map((id) => ({ label: miscellaneousTypes[id], subclassIds: [id] })) },
-  { label: 'Miscellaneous', subclassIds: [0, 1, 4], leaves: [0, 1, 4].map((id) => ({ label: miscellaneousTypes[id], subclassIds: [id] })) },
+  {
+    label: 'Collectibles',
+    subclassIds: [2, 3, 5, 6],
+    leaves: [2, 3, 5, 6].map((id) => ({
+      label: miscellaneousTypes[id],
+      subclassIds: [id],
+    })),
+  },
+  {
+    label: 'Miscellaneous',
+    subclassIds: [0, 1, 4],
+    leaves: [0, 1, 4].map((id) => ({
+      label: miscellaneousTypes[id],
+      subclassIds: [id],
+    })),
+  },
 ];
-const wowTokenGroups: ArmorGroup[] = [{ label: 'WoW Token', subclassIds: [0], leaves: [{ label: 'WoW Token', subclassIds: [0] }] }];
-const categories = ['Weapons', 'Armor', 'Containers', 'Gems', 'Item Enhancements', 'Consumables', 'Glyphs', 'Trade Goods', 'Recipes', 'Profession Equipment', 'Housing', 'Battle Pets', 'Quest Items', 'Miscellaneous', 'WoW Token'];
-const supportedCategories = new Set(categories);
-const initialSearch: SearchState = { query: '', group: null, leaf: null, subclasses: [], inventoryTypes: [], expansionId: null, minLevel: null, maxLevel: null, minQuality: null, maxQuality: null, sort: 'name', direction: 'asc' };
+const wowTokenGroups: ArmorGroup[] = [
+  {
+    label: 'WoW Token',
+    subclassIds: [0],
+    leaves: [{ label: 'WoW Token', subclassIds: [0] }],
+  },
+];
 
-function formatGold(copper: number) {
-  const value = Number(copper); const gold = Math.floor(value / 10_000); const silver = Math.floor((value % 10_000) / 100); const rest = value % 100;
-  return <span className="whitespace-nowrap"><b className="text-[#f6d449]">{gold.toLocaleString()}</b><small>g</small> <b>{silver}</b><small>s</small> <b className="text-[#c77a4c]">{rest}</b><small>c</small></span>;
-}
+const formatGold = (copper: number) => <Money copper={copper} />;
 
 function variantLabel(variant: Variant, index: number) {
-  const stats = variant.tertiaryStats.map((stat) => statNames[stat]).filter(Boolean);
-  const level = variant.effectiveItemLevel ? `Niv ${variant.effectiveItemLevel}` : `Variant ${index + 1}`;
-  return stats.length ? `${level} · ${stats.join(' · ')}` : `${level} · ${variant.bonusListIds.length} bonuses`;
-}
-
-function wowheadData(itemId: number, bonusListIds: number[], modifiers: Modifier[], itemLevel?: number | null, locale: Locale = 'en-US') {
-  const playerLevel = modifiers.find((modifier) => modifier.type === 9)?.value;
-  return [`item=${itemId}`, locale === 'es-MX' ? 'domain=es' : '', bonusListIds.length ? `bonus=${bonusListIds.join(':')}` : '', playerLevel ? `lvl=${playerLevel}` : '', itemLevel ? `ilvl=${itemLevel}` : ''].filter(Boolean).join('&');
-}
-
-function wowheadHref(itemId: number, bonusListIds: number[], modifiers: Modifier[], itemLevel?: number | null, locale: Locale = 'en-US') {
-  const parameters = new URLSearchParams();
-  if (bonusListIds.length) parameters.set('bonus', bonusListIds.join(':'));
-  const playerLevel = modifiers.find((modifier) => modifier.type === 9)?.value;
-  if (playerLevel) parameters.set('lvl', String(playerLevel));
-  if (itemLevel) parameters.set('ilvl', String(itemLevel));
-  return `https://${locale === 'es-MX' ? 'es' : 'www'}.wowhead.com/item=${itemId}${parameters.size ? `?${parameters}` : ''}`;
-}
-
-function PriceHistoryChart({ points }: { points: Array<Pick<HistoryPoint, 'capturedAt' | 'minBuyoutCopper'>> }) {
-  if (points.length < 2) return <div className="grid h-36 place-items-center rounded border border-dashed border-[#514a45] text-sm text-[#9d968e]">More captures are needed to draw a trend.</div>;
-  const values = points.map((point) => Number(point.minBuyoutCopper)); const min = Math.min(...values); const max = Math.max(...values); const span = Math.max(1, max - min);
-  const path = points.map((point, index) => `${index ? 'L' : 'M'} ${8 + (index / (points.length - 1)) * 584} ${132 - ((Number(point.minBuyoutCopper) - min) / span) * 116}`).join(' ');
-  return <div className="rounded border border-[#4d453f] bg-[#171413] p-2"><svg viewBox="0 0 600 140" role="img" aria-label="Minimum price history" className="h-40 w-full overflow-visible"><path d="M 8 16 H 592 M 8 74 H 592 M 8 132 H 592" stroke="#312c29"/><path d={path} fill="none" stroke="#e8c94d" strokeWidth="3" strokeLinejoin="round"/><circle cx="592" cy={132 - ((values.at(-1)! - min) / span) * 116} r="4" fill="#fff17a"/></svg><div className="flex justify-between text-xs text-[#8f8983]"><span>{new Date(points[0].capturedAt).toLocaleDateString()}</span><span>{new Date(points.at(-1)!.capturedAt).toLocaleDateString()}</span></div></div>;
+  const stats = variant.tertiaryStats
+    .map((stat) => statNames[stat])
+    .filter(Boolean);
+  const level = variant.effectiveItemLevel
+    ? `Niv ${variant.effectiveItemLevel}`
+    : `Variant ${index + 1}`;
+  return stats.length
+    ? `${level} · ${stats.join(' · ')}`
+    : `${level} · ${variant.bonusListIds.length} bonuses`;
 }
 
 export function AuctionDashboard() {
   const [locale, setLocale] = useState<Locale>('en-US');
-  const [realms, setRealms] = useState<Realm[]>([]); const [realmId, setRealmId] = useState<number | null>(null);
-  const [items, setItems] = useState<ArmorItem[]>([]); const [query, setQuery] = useState('');
-  const [activeRoot, setActiveRoot] = useState(''); const [armorGroup, setArmorGroup] = useState<string | null>(null); const [armorLeaf, setArmorLeaf] = useState<string | null>(null);
-  const [filterOpen, setFilterOpen] = useState(false); const [expansionId, setExpansionId] = useState<number | null>(null); const [minLevel, setMinLevel] = useState(''); const [maxLevel, setMaxLevel] = useState(''); const [minQuality, setMinQuality] = useState<number | null>(null); const [maxQuality, setMaxQuality] = useState<number | null>(null);
-  const [applied, setApplied] = useState<SearchState>(initialSearch); const [hasSearched, setHasSearched] = useState(false); const [page, setPage] = useState(1); const [pages, setPages] = useState(1); const [total, setTotal] = useState(0);
-  const [detail, setDetail] = useState<ItemDetail | null>(null); const [selectedVariant, setSelectedVariant] = useState(''); const [wantedQuantity, setWantedQuantity] = useState(1);
-  const [history, setHistory] = useState<HistoryData | null>(null); const [comparison, setComparison] = useState<ComparisonData | null>(null); const [historyDays, setHistoryDays] = useState(30);
-  const [wowToken, setWowToken] = useState<WowTokenData | null>(null); const [wowTokenLoading, setWowTokenLoading] = useState(false);
-  const [favorites, setFavorites] = useState<Favorite[]>([]); const [favoritesOpen, setFavoritesOpen] = useState(false); const [favoritesLoaded, setFavoritesLoaded] = useState(false);
-  const [collectorHealth, setCollectorHealth] = useState<CollectorHealth | null>(null); const [showCollected, setShowCollected] = useState(false); const previousCollectorStatus = useRef<CollectorHealth['status'] | null>(null);
-  const [loading, setLoading] = useState(true); const [detailLoading, setDetailLoading] = useState(false); const [error, setError] = useState('');
-  const copy = uiCopy[locale]; const collectorReady = collectorHealth?.status === 'ready'; const interactionLocked = !collectorReady;
-  const label = (value: string) => locale === 'es-MX' ? (spanishLabels[value] ?? weaponSpanishLabels[value] ?? tradeGoodSpanishLabels[value] ?? professionSpanishLabels[value] ?? specialSpanishLabels[value] ?? inventoryTypeSpanishLabels[value] ?? value) : value;
-  const marketPath = activeRoot === 'WoW Token' ? 'wow-token' : activeRoot === 'Miscellaneous' ? 'miscellaneous' : activeRoot === 'Quest Items' ? 'quest-items' : activeRoot === 'Battle Pets' ? 'battle-pets' : activeRoot === 'Housing' ? 'housing' : activeRoot === 'Profession Equipment' ? 'profession-equipment' : activeRoot === 'Recipes' ? 'recipes' : activeRoot === 'Trade Goods' ? 'trade-goods' : activeRoot === 'Glyphs' ? 'glyphs' : activeRoot === 'Consumables' ? 'consumables' : activeRoot === 'Item Enhancements' ? 'enhancements' : activeRoot === 'Gems' ? 'gems' : activeRoot === 'Containers' ? 'containers' : activeRoot === 'Weapons' ? 'weapons' : 'armor';
-  const subclassLabel = (subclassId: number | null) => {
-    const labels = marketPath === 'wow-token' ? wowTokenTypes : marketPath === 'miscellaneous' ? miscellaneousTypes : marketPath === 'quest-items' ? questItemTypes : marketPath === 'battle-pets' ? battlePetTypes : marketPath === 'housing' ? housingTypes : marketPath === 'profession-equipment' ? professionEquipmentTypes : marketPath === 'recipes' ? recipeTypes : marketPath === 'trade-goods' ? tradeGoodTypes : marketPath === 'glyphs' ? glyphTypes : marketPath === 'consumables' ? consumableTypes : marketPath === 'enhancements' ? enhancementTypes : marketPath === 'gems' ? gemTypes : marketPath === 'containers' ? containerTypes : armorTypes;
-    return label(labels[Number(subclassId)] ?? activeRoot);
+  const [realms, setRealms] = useState<Realm[]>([]);
+  const [realmId, setRealmId] = useState<number | null>(null);
+  const [items, setItems] = useState<ArmorItem[]>([]);
+  const [query, setQuery] = useState('');
+  const [activeRoot, setActiveRoot] = useState('');
+  const [armorGroup, setArmorGroup] = useState<string | null>(null);
+  const [armorLeaf, setArmorLeaf] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [expansionId, setExpansionId] = useState<number | null>(null);
+  const [minLevel, setMinLevel] = useState('');
+  const [maxLevel, setMaxLevel] = useState('');
+  const [minQuality, setMinQuality] = useState<number | null>(null);
+  const [maxQuality, setMaxQuality] = useState<number | null>(null);
+  const [includeOutOfStock, setIncludeOutOfStock] = useState(false);
+  const [applied, setApplied] = useState<SearchState>(initialSearch);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [detail, setDetail] = useState<ItemDetail | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState('');
+  const [wantedQuantity, setWantedQuantity] = useState(1);
+  const [history, setHistory] = useState<HistoryData | null>(null);
+  const [comparison, setComparison] = useState<ComparisonData | null>(null);
+  const [historyDays, setHistoryDays] = useState(30);
+  const [wowToken, setWowToken] = useState<WowTokenData | null>(null);
+  const [wowTokenLoading, setWowTokenLoading] = useState(false);
+  const {
+    favorites,
+    setFavorites,
+    loaded: favoritesLoaded,
+  } = useStoredFavorites();
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [favoriteItems, setFavoriteItems] = useState<ArmorItem[]>([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [collectorHealth, setCollectorHealth] =
+    useState<CollectorHealth | null>(null);
+  const [showCollected, setShowCollected] = useState(false);
+  const previousCollectorStatus = useRef<CollectorHealth['status'] | null>(
+    null,
+  );
+  const initialFavoritesOpened = useRef(false);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState('');
+  const copy = uiCopy[locale];
+  const collectorReady =
+    collectorHealth?.status === 'ready' ||
+    Number(collectorHealth?.armorListings ?? 0) > 0;
+  const interactionLocked = !collectorReady;
+  const label = (value: string) =>
+    locale === 'es-MX'
+      ? (spanishLabels[value] ??
+        navigationSpanishLabels[value] ??
+        weaponSpanishLabels[value] ??
+        tradeGoodSpanishLabels[value] ??
+        professionSpanishLabels[value] ??
+        specialSpanishLabels[value] ??
+        inventoryTypeSpanishLabels[value] ??
+        value)
+      : value;
+  const marketPath = categoryPath(activeRoot);
+  const resultMarketPath = categoryPath(applied.category);
+  const subclassLabel = (
+    subclassId: number | null,
+    itemClassId?: number | null,
+  ) => {
+    const encodedClassId =
+      subclassId !== null && Number(subclassId) >= 1000
+        ? Math.floor(Number(subclassId) / 1000)
+        : null;
+    const rawSubclassId =
+      encodedClassId === null || subclassId === null
+        ? subclassId
+        : Number(subclassId) % 1000;
+    const itemMarketPath =
+      itemClassId == null && encodedClassId === null
+        ? categoryPath(categoryForItemClass(detail?.itemClassId))
+        : categoryPath(categoryForItemClass(itemClassId ?? encodedClassId));
+    const labels =
+      itemMarketPath === 'wow-token'
+        ? wowTokenTypes
+        : itemMarketPath === 'miscellaneous'
+          ? miscellaneousTypes
+          : itemMarketPath === 'quest-items'
+            ? questItemTypes
+            : itemMarketPath === 'battle-pets'
+              ? battlePetTypes
+              : itemMarketPath === 'housing'
+                ? housingTypes
+                : itemMarketPath === 'profession-equipment'
+                  ? professionEquipmentTypes
+                  : itemMarketPath === 'recipes'
+                    ? recipeTypes
+                    : itemMarketPath === 'trade-goods'
+                      ? tradeGoodTypes
+                      : itemMarketPath === 'glyphs'
+                        ? glyphTypes
+                        : itemMarketPath === 'consumables'
+                          ? consumableTypes
+                          : itemMarketPath === 'enhancements'
+                            ? enhancementTypes
+                            : itemMarketPath === 'gems'
+                              ? gemTypes
+                              : itemMarketPath === 'containers'
+                                ? containerTypes
+                                : armorTypes;
+    return label(
+      labels[Number(rawSubclassId)] ??
+        categoryForItemClass(itemClassId ?? encodedClassId),
+    );
   };
-  const activeGroups = activeRoot === 'WoW Token' ? wowTokenGroups : activeRoot === 'Miscellaneous' ? miscellaneousGroups : activeRoot === 'Quest Items' ? questItemGroups : activeRoot === 'Battle Pets' ? battlePetGroups : activeRoot === 'Housing' ? housingGroups : activeRoot === 'Profession Equipment' ? professionEquipmentGroups : activeRoot === 'Recipes' ? recipeGroups : activeRoot === 'Trade Goods' ? tradeGoodsGroups : activeRoot === 'Glyphs' ? glyphGroups : activeRoot === 'Consumables' ? consumableGroups : activeRoot === 'Item Enhancements' ? enhancementGroups : activeRoot === 'Gems' ? gemGroups : activeRoot === 'Containers' ? containerGroups : activeRoot === 'Weapons' ? weaponGroups : armorGroups;
-  const isFavorite = (itemId: number) => favorites.some((favorite) => favorite.itemId === itemId);
-  const toggleFavorite = (item: Pick<ArmorItem, 'id' | 'name'> | Pick<ItemDetail, 'id' | 'name'>) => {
-    setFavorites((current) => current.some((favorite) => favorite.itemId === item.id)
-      ? current.filter((favorite) => favorite.itemId !== item.id)
-      : [{ itemId: item.id, category: marketPath, name: item.name, addedAt: new Date().toISOString() }, ...current].slice(0, 100));
+  const activeGroups =
+    activeRoot === 'WoW Token'
+      ? wowTokenGroups
+      : activeRoot === 'Miscellaneous'
+        ? miscellaneousGroups
+        : activeRoot === 'Quest Items'
+          ? questItemGroups
+          : activeRoot === 'Battle Pets'
+            ? battlePetGroups
+            : activeRoot === 'Housing'
+              ? housingGroups
+              : activeRoot === 'Profession Equipment'
+                ? professionEquipmentGroups
+                : activeRoot === 'Recipes'
+                  ? recipeGroups
+                  : activeRoot === 'Trade Goods'
+                    ? tradeGoodsGroups
+                    : activeRoot === 'Glyphs'
+                      ? glyphGroups
+                      : activeRoot === 'Consumables'
+                        ? consumableGroups
+                        : activeRoot === 'Item Enhancements'
+                          ? enhancementGroups
+                          : activeRoot === 'Gems'
+                            ? gemGroups
+                            : activeRoot === 'Containers'
+                              ? containerGroups
+                              : activeRoot === 'Weapons'
+                                ? weaponGroups
+                                : armorGroups;
+  const isFavorite = (itemId: number) =>
+    favorites.some((favorite) => favorite.itemId === itemId);
+  const toggleFavorite = (
+    item: Pick<ArmorItem, 'id' | 'name'> | Pick<ItemDetail, 'id' | 'name'>,
+  ) => {
+    const itemId = Number(item.id);
+    setFavorites((current) =>
+      current.some((favorite) => favorite.itemId === itemId)
+        ? current.filter((favorite) => favorite.itemId !== itemId)
+        : [
+            {
+              itemId,
+              category:
+                detail?.id === itemId
+                  ? categoryPath(categoryForItemClass(detail.itemClassId))
+                  : resultMarketPath,
+              name: item.name,
+              addedAt: new Date().toISOString(),
+            },
+            ...current,
+          ].slice(0, 100),
+    );
+    setFavoriteItems((current) =>
+      current.filter((favorite) => Number(favorite.id) !== itemId),
+    );
   };
-  const removeFavorite = (itemId: number) => setFavorites((current) => current.filter((favorite) => favorite.itemId !== itemId));
   const openWowToken = async () => {
     if (!collectorReady) return;
-    setActiveRoot('WoW Token'); setArmorGroup(null); setArmorLeaf(null); setHasSearched(false); setItems([]); setTotal(0); setPage(1); setPages(1); setFilterOpen(false); closeDetail(); setWowTokenLoading(true); setWowToken(null);
-    try { const response = await fetch(`${collectorUrl}/api/wow-token`); if (!response.ok) throw new Error(); setWowToken(await response.json() as WowTokenData); } catch { setError('Unable to load WoW Token data.'); } finally { setWowTokenLoading(false); }
+    setActiveRoot('WoW Token');
+    setArmorGroup(null);
+    setArmorLeaf(null);
+    setHasSearched(false);
+    setItems([]);
+    setTotal(0);
+    setPage(1);
+    setFilterOpen(false);
+    closeDetail();
+    setWowTokenLoading(true);
+    setWowToken(null);
+    try {
+      setWowToken(await auctionApi.wowToken());
+    } catch {
+      setError('Unable to load WoW Token data.');
+    } finally {
+      setWowTokenLoading(false);
+    }
   };
-  const openFavorite = (favorite: Favorite) => {
-    const category = categories.find((entry) => (entry === 'WoW Token' ? 'wow-token' : entry === 'Miscellaneous' ? 'miscellaneous' : entry === 'Quest Items' ? 'quest-items' : entry === 'Battle Pets' ? 'battle-pets' : entry === 'Housing' ? 'housing' : entry === 'Profession Equipment' ? 'profession-equipment' : entry === 'Recipes' ? 'recipes' : entry === 'Trade Goods' ? 'trade-goods' : entry === 'Glyphs' ? 'glyphs' : entry === 'Consumables' ? 'consumables' : entry === 'Item Enhancements' ? 'enhancements' : entry === 'Gems' ? 'gems' : entry === 'Containers' ? 'containers' : entry === 'Weapons' ? 'weapons' : 'armor') === favorite.category);
-    if (!category || realmId === null) return;
-    setActiveRoot(category); setArmorGroup(null); setArmorLeaf(null); setFavoritesOpen(false); void openDetail(favorite.itemId, realmId, '', locale, favorite.category);
+  const loadFavorites = useCallback(
+    async (
+      targetRealmId: number | null,
+      targetLocale: Locale,
+      source: Favorite[],
+    ) => {
+      if (targetRealmId === null || source.length === 0) {
+        setFavoriteItems([]);
+        return;
+      }
+      setFavoritesLoading(true);
+      setError('');
+      try {
+        const data = await auctionApi.favorites(
+          targetRealmId,
+          targetLocale,
+          source.map((favorite) => favorite.itemId),
+        );
+        setFavoriteItems(
+          data.items.map((item) => ({
+            ...item,
+            id: Number(item.id),
+            subclassId:
+              item.subclassId === null || item.itemClassId === null
+                ? item.subclassId
+                : item.itemClassId * 1000 + item.subclassId,
+          })),
+        );
+      } catch {
+        setFavoriteItems([]);
+        setError(
+          targetLocale === 'es-MX'
+            ? 'No fue posible cargar los favoritos.'
+            : 'Unable to load favorites.',
+        );
+      } finally {
+        setFavoritesLoading(false);
+      }
+    },
+    [],
+  );
+
+  const loadArmor = async (
+    targetRealmId: number,
+    state: SearchState,
+    targetPage = 1,
+    targetLocale = locale,
+  ) => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await auctionApi.search(
+        activeRoot ? marketPath : 'search',
+        targetRealmId,
+        state,
+        targetPage,
+        pageSize,
+        targetLocale,
+      );
+      setItems(
+        data.items.map((sourceItem) => {
+          const item = { ...sourceItem, id: Number(sourceItem.id) };
+          return item.isAvailable
+            ? item
+            : {
+                ...item,
+                inventoryType: [
+                  item.inventoryType,
+                  targetLocale === 'es-MX'
+                    ? `Sin stock · visto ${new Date(item.lastSeenAt).toLocaleDateString(targetLocale)}`
+                    : `Out of stock · last seen ${new Date(item.lastSeenAt).toLocaleDateString(targetLocale)}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · '),
+              };
+        }),
+      );
+      setTotal(data.total);
+      setPage(data.page);
+      setItems((current) =>
+        current.map((item) =>
+          item.subclassId === null || item.itemClassId === null
+            ? item
+            : {
+                ...item,
+                subclassId: item.itemClassId * 1000 + item.subclassId,
+              },
+        ),
+      );
+    } catch {
+      setItems([]);
+      setTotal(0);
+      setError('Unable to load auction data.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const loadArmor = async (targetRealmId: number, state: SearchState, targetPage = 1, targetLocale = locale) => {
-    setLoading(true); setError('');
-    const params = new URLSearchParams({ realmId: String(targetRealmId), page: String(targetPage), limit: String(pageSize), sort: state.sort, direction: state.direction, locale: targetLocale });
-    if (state.query) params.set('q', state.query); if (state.bonusStat) params.set('bonusStat', String(state.bonusStat));
-    if (state.subclasses.length) params.set('subclasses', state.subclasses.join(',')); if (state.inventoryTypes.length) params.set('inventoryTypes', state.inventoryTypes.join(','));
-    if (state.expansionId !== null) params.set('expansions', String(state.expansionId)); if (state.minLevel !== null) params.set('minLevel', String(state.minLevel)); if (state.maxLevel !== null) params.set('maxLevel', String(state.maxLevel));
-    if (state.minQuality !== null) params.set('minQuality', String(state.minQuality)); if (state.maxQuality !== null) params.set('maxQuality', String(state.maxQuality));
-    try {
-      const response = await fetch(`${collectorUrl}/api/${activeRoot ? marketPath : 'search'}?${params}`); if (!response.ok) throw new Error();
-      const data = await response.json() as { items: ArmorItem[]; total: number; page: number; pages: number };
-      setItems(data.items); setTotal(data.total); setPage(data.page); setPages(Math.max(1, data.pages));
-    } catch { setItems([]); setTotal(0); setError('Unable to load auction data.'); } finally { setLoading(false); }
+  const closeDetail = () => {
+    setDetail(null);
+    setSelectedVariant('');
+    setHistory(null);
+    setComparison(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('item');
+    window.history.replaceState(null, '', url);
   };
-
-  const closeDetail = () => { setDetail(null); setSelectedVariant(''); setHistory(null); setComparison(null); const url = new URL(window.location.href); url.searchParams.delete('item'); window.history.replaceState(null, '', url); };
-  const openDetail = async (itemId: number, targetRealmId = realmId, targetVariantKey = '', targetLocale = locale, targetPath = marketPath) => {
-    if (targetRealmId === null) return; setDetailLoading(true); setError('');
+  const openDetail = async (
+    itemId: number,
+    targetRealmId = realmId,
+    targetVariantKey = '',
+    targetLocale = locale,
+    targetPath = marketPath,
+  ) => {
+    if (targetRealmId === null) return;
+    setDetailLoading(true);
+    setError('');
     try {
-      const response = await fetch(`${collectorUrl}/api/${targetPath}/${itemId}?realmId=${targetRealmId}&locale=${targetLocale}`); if (!response.ok) throw new Error();
-      const data = await response.json() as ItemDetail; setDetail(data); setSelectedVariant(data.variants.some((variant) => variant.variantKey === targetVariantKey) ? targetVariantKey : data.variants[0]?.variantKey ?? ''); setWantedQuantity(1);
-      const url = new URL(window.location.href); url.searchParams.set('item', String(itemId)); url.searchParams.set('realm', String(targetRealmId)); window.history.replaceState(null, '', url);
-      void fetch(`${collectorUrl}/api/${targetPath}/${itemId}/comparison`).then(async (value) => { if (!value.ok) throw new Error(); return value.json() as Promise<ComparisonData>; }).then((data) => setComparison(data)).catch(() => setComparison(null));
-    } catch { setError('Unable to load item details.'); } finally { setDetailLoading(false); }
+      const sourceData = await auctionApi.item(
+        targetPath,
+        itemId,
+        targetRealmId,
+        targetLocale,
+      );
+      const data = { ...sourceData, id: Number(sourceData.id) };
+      setDetail(data);
+      setSelectedVariant(
+        data.variants.some((variant) => variant.variantKey === targetVariantKey)
+          ? targetVariantKey
+          : (data.variants[0]?.variantKey ?? ''),
+      );
+      setWantedQuantity(1);
+      setActiveRoot(categoryForItemClass(data.itemClassId));
+      setArmorGroup(null);
+      setArmorLeaf(null);
+      const url = new URL(window.location.href);
+      url.searchParams.set('item', String(itemId));
+      url.searchParams.set('realm', String(targetRealmId));
+      window.history.replaceState(null, '', url);
+      void auctionApi
+        .comparison(targetPath, itemId)
+        .then((data) => setComparison(data))
+        .catch(() => setComparison(null));
+    } catch {
+      setError('Unable to load item details.');
+    } finally {
+      setDetailLoading(false);
+    }
   };
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(favoritesStorageKey) ?? '[]') as unknown;
-      if (Array.isArray(saved)) setFavorites(saved.filter((favorite): favorite is Favorite => typeof favorite === 'object' && favorite !== null && Number.isSafeInteger((favorite as Favorite).itemId) && typeof (favorite as Favorite).category === 'string' && typeof (favorite as Favorite).name === 'string' && typeof (favorite as Favorite).addedAt === 'string').slice(0, 100));
-    } catch { window.localStorage.removeItem(favoritesStorageKey); }
-    setFavoritesLoaded(true);
-  }, []);
-  useEffect(() => { if (favoritesLoaded) window.localStorage.setItem(favoritesStorageKey, JSON.stringify(favorites)); }, [favorites, favoritesLoaded]);
+    if (
+      initialFavoritesOpened.current ||
+      !favoritesLoaded ||
+      realmId === null ||
+      !collectorReady
+    )
+      return;
+    initialFavoritesOpened.current = true;
+    if (favorites.length === 0) return;
+    setFavoritesOpen(true);
+    void loadFavorites(realmId, locale, favorites);
+  }, [
+    favoritesLoaded,
+    realmId,
+    collectorReady,
+    favorites,
+    locale,
+    loadFavorites,
+  ]);
   useEffect(() => {
     let active = true;
-    const refresh = async () => { try { const response = await fetch(`${collectorUrl}/healthz`); if (!response.ok) throw new Error(); const health = await response.json() as CollectorHealth; if (active) setCollectorHealth(health); } catch { if (active) setCollectorHealth({ status: 'error', detail: 'Collector unavailable' }); } };
-    void refresh(); const timer = window.setInterval(() => void refresh(), 2500);
-    return () => { active = false; window.clearInterval(timer); };
+    const refresh = async () => {
+      try {
+        const health = await auctionApi.health();
+        if (active) setCollectorHealth(health);
+      } catch {
+        if (active)
+          setCollectorHealth({
+            status: 'error',
+            detail: 'Collector unavailable',
+          });
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, []);
-  useEffect(() => { const status = collectorHealth?.status ?? null; if (status === 'ready' && previousCollectorStatus.current === 'collecting') { setShowCollected(true); const timer = window.setTimeout(() => setShowCollected(false), 500); previousCollectorStatus.current = status; return () => window.clearTimeout(timer); } previousCollectorStatus.current = status; }, [collectorHealth?.status]);
-  useEffect(() => { const savedLocale = window.localStorage.getItem('auction-house-locale'); if (savedLocale === 'es-MX' || savedLocale === 'en-US') setLocale(savedLocale); fetch(`${collectorUrl}/api/realms`).then(async (response) => { if (!response.ok) throw new Error(); return response.json() as Promise<{ realms: Realm[] }>; }).then((data) => {
-    setRealms(data.realms); const urlRealm = Number(new URL(window.location.href).searchParams.get('realm')); const saved = Number(window.localStorage.getItem('auction-house-realm-id')); const savedRealm = data.realms.find((realm) => realm.id === saved); const defaultRealm = data.realms.find((realm) => realm.isDefault);
-    setRealmId((data.realms.find((realm) => realm.id === urlRealm) ?? (savedRealm?.id === 0 && !savedRealm.isDefault ? undefined : savedRealm) ?? defaultRealm ?? data.realms[0])?.id ?? null);
-    setLoading(false);
-  }).catch(() => { setError('Unable to load realms.'); setLoading(false); }); }, []);
-  const changeLocale = (nextLocale: Locale) => { setLocale(nextLocale); window.localStorage.setItem('auction-house-locale', nextLocale); if (hasSearched && realmId !== null) void loadArmor(realmId, applied, page, nextLocale); if (detail && realmId !== null) void openDetail(detail.id, realmId, selectedVariant, nextLocale); };
+  useEffect(() => {
+    const status = collectorHealth?.status ?? null;
+    if (
+      status === 'ready' &&
+      previousCollectorStatus.current === 'collecting'
+    ) {
+      setShowCollected(true);
+      const timer = window.setTimeout(() => setShowCollected(false), 500);
+      previousCollectorStatus.current = status;
+      return () => window.clearTimeout(timer);
+    }
+    previousCollectorStatus.current = status;
+  }, [collectorHealth?.status]);
+  useEffect(() => {
+    const savedLocale = window.localStorage.getItem('auction-house-locale');
+    if (savedLocale === 'es-MX' || savedLocale === 'en-US')
+      setLocale(savedLocale);
+    auctionApi
+      .realms()
+      .then((data) => {
+        setRealms(data.realms);
+        const urlRealm = Number(
+          new URL(window.location.href).searchParams.get('realm'),
+        );
+        const saved = Number(
+          window.localStorage.getItem('auction-house-realm-id'),
+        );
+        const savedRealm = data.realms.find((realm) => realm.id === saved);
+        const defaultRealm = data.realms.find((realm) => realm.isDefault);
+        setRealmId(
+          (
+            data.realms.find((realm) => realm.id === urlRealm) ??
+            (savedRealm?.id === 0 && !savedRealm.isDefault
+              ? undefined
+              : savedRealm) ??
+            defaultRealm ??
+            data.realms[0]
+          )?.id ?? null,
+        );
+        setLoading(false);
+      })
+      .catch(() => {
+        setError('Unable to load realms.');
+        setLoading(false);
+      });
+  }, []);
+  const changeLocale = (nextLocale: Locale) => {
+    setLocale(nextLocale);
+    window.localStorage.setItem('auction-house-locale', nextLocale);
+    if (favoritesOpen) void loadFavorites(realmId, nextLocale, favorites);
+    else if (hasSearched && realmId !== null)
+      void loadArmor(realmId, applied, page, nextLocale);
+    if (detail && realmId !== null)
+      void openDetail(detail.id, realmId, selectedVariant, nextLocale);
+  };
 
-  useEffect(() => { if (realmId === null) return; const deepItemId = Number(new URL(window.location.href).searchParams.get('item')); window.localStorage.setItem('auction-house-realm-id', String(realmId)); setApplied(initialSearch); setHasSearched(false); setItems([]); setTotal(0); setPage(1); setPages(1); setQuery(''); setExpansionId(null); setMinLevel(''); setMaxLevel(''); setMinQuality(null); setMaxQuality(null); setFilterOpen(false); closeDetail(); setLoading(false);
-    if (Number.isSafeInteger(deepItemId) && deepItemId > 0) void openDetail(deepItemId, realmId);
+  useEffect(() => {
+    if (realmId === null) return;
+    const deepItemId = Number(
+      new URL(window.location.href).searchParams.get('item'),
+    );
+    window.localStorage.setItem('auction-house-realm-id', String(realmId));
+    setApplied(initialSearch);
+    setHasSearched(false);
+    setItems([]);
+    setTotal(0);
+    setPage(1);
+    setQuery('');
+    setExpansionId(null);
+    setMinLevel('');
+    setMaxLevel('');
+    setMinQuality(null);
+    setMaxQuality(null);
+    setIncludeOutOfStock(false);
+    setFilterOpen(false);
+    closeDetail();
+    setLoading(false);
+    if (Number.isSafeInteger(deepItemId) && deepItemId > 0)
+      void openDetail(deepItemId, realmId);
     // Realm changes intentionally reset list filters and do not query auction data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realmId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const tooltipWindow = window as Window & { WH?: { Tooltips?: { refreshLinks?: () => void } }; $WowheadPower?: { refreshLinks?: () => void } };
+      const tooltipWindow = window as Window & {
+        WH?: { Tooltips?: { refreshLinks?: () => void } };
+        $WowheadPower?: { refreshLinks?: () => void };
+      };
       tooltipWindow.WH?.Tooltips?.refreshLinks?.();
       tooltipWindow.$WowheadPower?.refreshLinks?.();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [items, detail, locale]);
+  }, [items, favoriteItems, detail, locale]);
 
-  const buildSearch = (sort = applied.sort, direction = applied.direction): SearchState => {
-    const group = activeGroups.find((entry) => entry.label === armorGroup); const leaf = group?.leaves.find((entry) => entry.label === armorLeaf);
-    return { query: query.trim(), group: armorGroup, leaf: armorLeaf, bonusStat: leaf?.bonusStat, subclasses: leaf?.subclassIds.length ? leaf.subclassIds : group?.subclassIds ?? [], inventoryTypes: leaf?.types ?? [], expansionId, minLevel: minLevel === '' ? null : Number(minLevel), maxLevel: maxLevel === '' ? null : Number(maxLevel), minQuality, maxQuality, sort, direction };
+  const search = (groupLabel = armorGroup, leafLabel = armorLeaf) => {
+    if (
+      !collectorReady ||
+      realmId === null ||
+      (!supportedCategories.has(activeRoot) && !query.trim())
+    )
+      return;
+    const group = activeGroups.find((entry) => entry.label === groupLabel);
+    const leaf = group?.leaves.find((entry) => entry.label === leafLabel);
+    const state: SearchState = {
+      category: activeRoot,
+      query: query.trim(),
+      group: groupLabel,
+      leaf: leafLabel,
+      bonusStat: leaf?.bonusStat,
+      subclasses: leaf?.subclassIds.length
+        ? leaf.subclassIds
+        : (group?.subclassIds ?? []),
+      inventoryTypes: leaf?.types ?? [],
+      expansionId,
+      minLevel: minLevel === '' ? null : Number(minLevel),
+      maxLevel: maxLevel === '' ? null : Number(maxLevel),
+      minQuality,
+      maxQuality,
+      includeOutOfStock,
+      sort: applied.sort,
+      direction: applied.direction,
+    };
+    setFavoritesOpen(false);
+    setApplied(state);
+    setHasSearched(true);
+    closeDetail();
+    if (leaf?.kind === 'special') {
+      setItems([]);
+      setTotal(0);
+      setError('Runecarving is not available yet.');
+      return;
+    }
+    void loadArmor(realmId, state);
   };
-  useEffect(() => {
-    if (!hasSearched) return;
-    setHasSearched(false); setItems([]); setTotal(0); setPage(1); setPages(1); setError('');
-  }, [activeRoot, armorGroup, armorLeaf, query, expansionId, minLevel, maxLevel, minQuality, maxQuality]);
-  const search = (groupLabel = armorGroup, leafLabel = armorLeaf) => { if (!collectorReady || realmId === null || (!supportedCategories.has(activeRoot) && !query.trim())) return; const group = activeGroups.find((entry) => entry.label === groupLabel); const leaf = group?.leaves.find((entry) => entry.label === leafLabel); const state: SearchState = { query: query.trim(), group: groupLabel, leaf: leafLabel, bonusStat: leaf?.bonusStat, subclasses: leaf?.subclassIds.length ? leaf.subclassIds : group?.subclassIds ?? [], inventoryTypes: leaf?.types ?? [], expansionId, minLevel: minLevel === '' ? null : Number(minLevel), maxLevel: maxLevel === '' ? null : Number(maxLevel), minQuality, maxQuality, sort: applied.sort, direction: applied.direction }; setApplied(state); setHasSearched(true); closeDetail(); if (leaf?.kind === 'special') { setItems([]); setTotal(0); setError('Runecarving is not available yet.'); return; } void loadArmor(realmId, state); };
-  const changePage = (next: number) => { if (hasSearched && realmId !== null && next >= 1 && next <= pages) void loadArmor(realmId, applied, next); };
-  const changeSort = (sort: string) => { if (!hasSearched || realmId === null) return; const direction = applied.sort === sort && applied.direction === 'asc' ? 'desc' : 'asc'; const state = { ...applied, sort, direction } as SearchState; const factor = direction === 'asc' ? 1 : -1;
-    setItems((current) => [...current].sort((left, right) => { const leftValue = sort === 'name' ? left.name.localeCompare(right.name, locale) : sort === 'level' ? Number(left.effectiveItemLevel ?? left.itemLevel ?? -1) - Number(right.effectiveItemLevel ?? right.itemLevel ?? -1) : sort === 'price' ? Number(left.minBuyoutCopper) - Number(right.minBuyoutCopper) : sort === 'quantity' ? Number(left.quantity) - Number(right.quantity) : Number(left.listingCount) - Number(right.listingCount); return leftValue * factor; }));
-    setApplied(state); void loadArmor(realmId, state, 1);
+  const changeSort = (sort: string) => {
+    if ((!hasSearched && !favoritesOpen) || realmId === null) return;
+    const direction =
+      applied.sort === sort && applied.direction === 'asc' ? 'desc' : 'asc';
+    const state = { ...applied, sort, direction } as SearchState;
+    const factor = direction === 'asc' ? 1 : -1;
+    const sortRows = (current: ArmorItem[]) =>
+      [...current].sort((left, right) => {
+        const leftValue =
+          sort === 'name'
+            ? left.name.localeCompare(right.name, locale)
+            : sort === 'level'
+              ? Number(left.effectiveItemLevel ?? left.itemLevel ?? -1) -
+                Number(right.effectiveItemLevel ?? right.itemLevel ?? -1)
+              : sort === 'price'
+                ? Number(left.minBuyoutCopper) - Number(right.minBuyoutCopper)
+                : sort === 'quantity'
+                  ? Number(left.quantity) - Number(right.quantity)
+                  : Number(left.listingCount) - Number(right.listingCount);
+        return leftValue * factor;
+      });
+    setApplied(state);
+    if (favoritesOpen) {
+      setFavoriteItems(sortRows);
+      return;
+    }
+    setItems(sortRows);
+    void loadArmor(realmId, state, 1);
   };
-  const sortHeader = (sort: string, title: string) => {
-    const active = applied.sort === sort;
-    return <button type="button" className={`flex w-full items-center gap-1 text-left hover:text-[#fff17a] ${active ? 'text-[#fff17a]' : ''}`} aria-sort={active ? (applied.direction === 'asc' ? 'ascending' : 'descending') : 'none'} onClick={() => changeSort(sort)}>{title}<span aria-hidden="true" className={active ? '' : 'opacity-35'}>{active && applied.direction === 'desc' ? '▼' : '▲'}</span></button>;
-  };
-
-  const activeVariant = detail?.variants.find((variant) => variant.variantKey === selectedVariant) ?? detail?.variants[0];
+  const activeVariant =
+    detail?.variants.find(
+      (variant) => variant.variantKey === selectedVariant,
+    ) ?? detail?.variants[0];
   const detailId = detail?.id;
-  useEffect(() => { if (!detailId || realmId === null) return; setHistory(null); const params = new URLSearchParams({ realmId: String(realmId), days: String(historyDays) }); if (activeVariant?.variantKey) params.set('variantKey', activeVariant.variantKey);
-    void fetch(`${collectorUrl}/api/${marketPath}/${detailId}/history?${params}`).then(async (value) => { if (!value.ok) throw new Error(); return value.json() as Promise<HistoryData>; }).then((data) => setHistory(data)).catch(() => setHistory(null));
+  useEffect(() => {
+    if (!detailId || realmId === null) return;
+    setHistory(null);
+    void auctionApi
+      .history(
+        marketPath,
+        detailId,
+        realmId,
+        historyDays,
+        activeVariant?.variantKey,
+      )
+      .then((data) => setHistory(data))
+      .catch(() => setHistory(null));
   }, [detailId, realmId, activeVariant?.variantKey, historyDays, marketPath]);
-  const activeLevels = useMemo(() => detail?.priceLevels.filter((level) => level.variantKey === activeVariant?.variantKey).sort((a, b) => Number(a.unitPriceCopper) - Number(b.unitPriceCopper)) ?? [], [detail, activeVariant?.variantKey]);
-  const bulk = useMemo(() => { let remaining = Math.max(0, wantedQuantity); let cost = 0; for (const level of activeLevels) { const take = Math.min(remaining, Number(level.quantity)); cost += take * Number(level.unitPriceCopper); remaining -= take; if (!remaining) break; } const bought = wantedQuantity - remaining; return { bought, cost, unit: bought ? Math.round(cost / bought) : 0 }; }, [activeLevels, wantedQuantity]);
-  const isCollecting = collectorHealth?.status === 'collecting' || collectorHealth?.status === 'starting';
-  const progress = collectorHealth?.progress; const progressPercent = progress && progress.total > 0 ? Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100))) : 0;
-  const showFavoritesHome = collectorReady && !activeRoot && !hasSearched && !detail && !detailLoading;
+  const activeLevels = useMemo(
+    () =>
+      detail?.priceLevels
+        .filter((level) => level.variantKey === activeVariant?.variantKey)
+        .sort(
+          (a, b) => Number(a.unitPriceCopper) - Number(b.unitPriceCopper),
+        ) ?? [],
+    [detail, activeVariant?.variantKey],
+  );
+  const bulk = useMemo(() => {
+    let remaining = Math.max(0, wantedQuantity);
+    let cost = 0;
+    for (const level of activeLevels) {
+      const take = Math.min(remaining, Number(level.quantity));
+      cost += take * Number(level.unitPriceCopper);
+      remaining -= take;
+      if (!remaining) break;
+    }
+    const bought = wantedQuantity - remaining;
+    return { bought, cost, unit: bought ? Math.round(cost / bought) : 0 };
+  }, [activeLevels, wantedQuantity]);
+  const displayedItems = favoritesOpen ? favoriteItems : items;
+  const craftingQualityByItem = useMemo(() => {
+    const groups = new Map<string, ArmorItem[]>();
+    for (const item of displayedItems)
+      groups.set(item.name, [...(groups.get(item.name) ?? []), item]);
+    const tiers = new Map<string, number>();
+    for (const group of groups.values()) {
+      const distinctLevels = [
+        ...new Set(
+          group.map((item) =>
+            Number(item.itemLevel ?? item.effectiveItemLevel ?? 0),
+          ),
+        ),
+      ].sort((left, right) => left - right);
+      if (distinctLevels.length < 2) continue;
+      for (const item of group)
+        tiers.set(
+          `${item.id}-${item.variantKey}`,
+          distinctLevels.indexOf(
+            Number(item.itemLevel ?? item.effectiveItemLevel ?? 0),
+          ) + 1,
+        );
+    }
+    return tiers;
+  }, [displayedItems]);
+  const isCollecting =
+    collectorHealth?.status === 'collecting' ||
+    collectorHealth?.status === 'starting';
+  const progress = collectorHealth?.progress;
+  const progressPercent =
+    progress && progress.total > 0
+      ? Math.max(
+          0,
+          Math.min(100, Math.round((progress.current / progress.total) * 100)),
+        )
+      : 0;
+  const resultsStatus = favoritesOpen
+    ? favoritesLoading
+      ? copy.loading
+      : `${favoriteItems.length.toLocaleString()} ${locale === 'es-MX' ? 'favoritos' : 'favorites'}`
+    : loading
+      ? copy.loading
+      : hasSearched
+        ? total > items.length
+          ? locale === 'es-MX'
+            ? `Mostrando ${items.length.toLocaleString()} de ${total.toLocaleString()} ${copy.results}`
+            : `Showing ${items.length.toLocaleString()} of ${total.toLocaleString()} ${copy.results}`
+          : `${total.toLocaleString()} ${copy.results}`
+        : '';
+  const resultsEmptyText = favoritesOpen
+    ? favorites.length === 0
+      ? locale === 'es-MX'
+        ? 'Marca objetos con la estrella para verlos aquí.'
+        : 'Star items to see them here.'
+      : error || copy.noResults
+    : hasSearched
+      ? error || copy.noResults
+      : copy.searchPrompt;
 
-  return <main className="auction-dashboard h-dvh overflow-hidden bg-[#3b3531] p-1.5 text-[#e7e2d8]">
-    <div className="mx-auto flex h-full max-w-[1440px] flex-col gap-1.5 overflow-hidden rounded-[7px] border border-[#514a45] bg-[#272220] p-1.5 shadow-[0_0_0_1px_#171413,0_8px_30px_rgba(0,0,0,.45)]">
-      <header aria-busy={interactionLocked} onKeyDown={(event) => { if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.placeholder === copy.search) { event.preventDefault(); setFilterOpen(false); search(); } }} className={`relative flex min-h-9 flex-wrap items-center gap-2 rounded-[5px] bg-[#211c1a] px-1.5 py-1 shadow-inner shadow-black/70 ${interactionLocked ? 'pointer-events-none' : ''}`}>
-        <label className="sr-only" htmlFor="realm">Choose a realm</label><select id="realm" value={realmId ?? ''} onChange={(event) => setRealmId(Number(event.target.value))} className="h-7 w-48 rounded border border-[#77706b] bg-[#292624] px-2 text-xs outline-none focus:border-[#d0b860]">{realms.map((realm) => <option key={realm.id} value={realm.id}>{realm.name}</option>)}</select>
-        <div className="relative"><button aria-label={locale === 'es-MX' ? 'Favoritos' : 'Favorites'} aria-expanded={favoritesOpen} onClick={() => setFavoritesOpen((value) => !value)} className={`relative grid size-7 place-items-center rounded border ${favoritesOpen ? 'border-[#d4ce63] bg-[#4b4430] text-[#fff17a]' : 'border-[#111] bg-[#373332] text-[#807d77] hover:text-[#fff17a]'}`}>★{favorites.length > 0 && <span className="absolute -right-1 -top-1 grid min-w-3.5 place-items-center rounded-full bg-[#b10d0d] px-1 text-[9px] leading-3 text-white">{favorites.length > 99 ? '99+' : favorites.length}</span>}</button>{favoritesOpen && <div className="absolute left-0 top-8 z-50 w-80 rounded border border-[#76718d] bg-[#090b19] p-2 shadow-[0_8px_24px_#000]"><div className="flex items-center justify-between border-b border-[#343238] px-1 pb-2"><h2 className="font-serif text-sm text-[#e9cc46]">{locale === 'es-MX' ? 'Favoritos' : 'Favorites'}</h2><span className="text-xs text-[#8f8983]">{favorites.length}/100</span></div>{favorites.length === 0 ? <p className="px-1 py-5 text-center text-xs text-[#9d968e]">{locale === 'es-MX' ? 'Guarda objetos con la estrella para verlos aquí.' : 'Save items with the star to find them here.'}</p> : <ul className="max-h-72 overflow-y-auto py-1">{favorites.map((favorite) => <li key={favorite.itemId} className="flex items-center gap-2 rounded px-1 py-1 hover:bg-[#211f21]"><button onClick={() => openFavorite(favorite)} className="min-w-0 flex-1 truncate text-left text-xs text-[#e7e2d8] hover:text-[#fff17a]" title={favorite.name}>{favorite.name}</button><button aria-label={`${locale === 'es-MX' ? 'Quitar de favoritos' : 'Remove from favorites'}: ${favorite.name}`} onClick={() => removeFavorite(favorite.itemId)} className="rounded px-1.5 py-0.5 text-xs text-[#d99494] hover:bg-[#4a2020] hover:text-white">×</button></li>)}</ul>}</div>}</div><button aria-label="Deals" className="grid size-7 place-items-center rounded border border-[#111] bg-[#373332] text-[#f0d64c]">✿</button>
-        <label className="relative min-w-44 flex-1"><span className="pointer-events-none absolute inset-y-0 left-2 flex items-center text-[#827b76]">⌕</span><span className="sr-only">{copy.search}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.search} className="h-7 w-full rounded border border-[#080706] bg-[#171514] pl-6 pr-2 text-xs outline-none placeholder:text-[#7e7873]" /></label>
-        <button aria-expanded={filterOpen} onClick={() => setFilterOpen((value) => !value)} className={`flex h-7 w-28 items-center justify-between rounded border px-3 text-xs ${filterOpen ? 'border-[#aaa4df] bg-[#4a456f]' : 'border-[#171311] bg-[#332d2a]'}`}>{copy.filter} <span className="text-[#f0cc22]">▶</span></button><button onClick={() => { setFilterOpen(false); search(); }} className="h-7 w-[116px] rounded border border-[#d07140] bg-gradient-to-b from-[#b10d0d] to-[#680000] font-serif text-sm text-[#ffe759] shadow-[inset_0_1px_#df4545,0_0_0_1px_#160000]">{copy.search}</button>
-        {filterOpen && <div className="absolute right-[122px] top-[34px] z-50 w-72 rounded border border-[#76718d] bg-[#090b19] p-3 text-sm shadow-[0_8px_24px_#000]">
-          <div className="mb-3"><p className="block font-serif text-[#e9cc46]">{copy.levelRange}</p><div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2"><input aria-label="Minimum item level" inputMode="numeric" value={minLevel} onChange={(event) => setMinLevel(event.target.value.replace(/\D/g, ''))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-2 py-1"/><span>–</span><input aria-label="Maximum item level" inputMode="numeric" value={maxLevel} onChange={(event) => setMaxLevel(event.target.value.replace(/\D/g, ''))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-2 py-1"/></div></div>
-          <div className="mb-3"><p className="block font-serif text-[#e9cc46]">{copy.rarity}</p><div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2"><select aria-label="Minimum rarity" value={minQuality ?? ''} onChange={(event) => setMinQuality(event.target.value === '' ? null : Number(event.target.value))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-1 py-1"><option value="">{copy.any}</option>{qualities.map((quality, index) => <option key={quality} value={index} style={{ color: qualityColors[quality.toUpperCase()] }}>{label(quality)}</option>)}</select><span>to</span><select aria-label="Maximum rarity" value={maxQuality ?? ''} onChange={(event) => setMaxQuality(event.target.value === '' ? null : Number(event.target.value))} className="min-w-0 rounded border border-[#343238] bg-[#211f21] px-1 py-1"><option value="">{copy.any}</option>{qualities.map((quality, index) => <option key={quality} value={index} style={{ color: qualityColors[quality.toUpperCase()] }}>{label(quality)}</option>)}</select></div></div>
-          <div className="mb-4"><label htmlFor="era" className="block font-serif text-[#e9cc46]">{copy.era}</label><select id="era" value={expansionId ?? ''} onChange={(event) => setExpansionId(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full rounded border border-[#343238] bg-[#211f21] px-2 py-1"><option value="">{locale === 'es-MX' ? 'Todas las expansiones' : 'All expansions'}</option>{expansions.map((expansion, index) => <option key={expansion} value={index}>{expansion}</option>)}</select></div>
-        </div>}
-      </header>
-      <div aria-busy={interactionLocked} className={`grid min-h-0 flex-1 gap-1.5 lg:grid-cols-[180px_minmax(0,1fr)] ${interactionLocked ? 'pointer-events-none' : ''}`}>
-        <aside className="overflow-y-auto rounded-[5px] border border-[#151312] bg-[#181514] p-1.5 shadow-inner shadow-black/80">{categories.map((category) => <div key={category} className="mb-1">
-          <button disabled={interactionLocked} onClick={() => { if (category === 'WoW Token') { void openWowToken(); return; } const next = activeRoot === category ? '' : category; setActiveRoot(next); setArmorGroup(null); setArmorLeaf(null); setHasSearched(false); setItems([]); setTotal(0); setPage(1); setPages(1); }} className={`block w-full rounded-[4px] border px-2 py-1 text-left font-serif text-sm leading-4 disabled:cursor-wait disabled:opacity-50 ${activeRoot === category ? 'border-[#d4ce63] bg-[#353127] text-[#f8e95c] shadow-[inset_0_0_10px_#b6b43b]' : 'border-[#292522] bg-[#2c2826] text-[#f3ce49] hover:bg-[#383230]'}`}>{label(category)}</button>
-          {category !== 'WoW Token' && supportedCategories.has(activeRoot) && category === activeRoot && activeGroups.map((group) => { const selected = armorGroup === group.label; return <div key={group.label}><button onClick={() => { const nextGroup = selected ? null : group.label; setArmorGroup(nextGroup); setArmorLeaf(null); }} className={`mt-0.5 ml-3 block w-[calc(100%-0.75rem)] rounded border px-2 py-0.5 text-left font-serif text-[13px] ${selected ? 'border-[#d4ce63] bg-[#353127] text-[#f8e95c] shadow-[inset_0_0_8px_#b6b43b]' : 'border-[#292522] bg-[#2c2826] text-[#e4e0d8] hover:border-[#aaa4df]'}`}>{label(group.label)}</button>
-            {selected && group.leaves.map((leaf) => <button key={leaf.label} title={leaf.kind === 'special' ? 'Filter pending verified Runecarving data.' : undefined} onClick={() => { const nextLeaf = armorLeaf === leaf.label ? null : leaf.label; setArmorLeaf(nextLeaf); }} className={`relative ml-5 block w-[calc(100%-1.25rem)] py-0.5 pl-4 pr-1 text-left font-serif text-[13px] before:absolute before:left-0 before:text-[#6f6862] before:content-['└'] ${armorLeaf === leaf.label ? 'bg-gradient-to-r from-[#56518e] via-[#45406f] to-transparent text-white' : leaf.kind === 'special' ? 'text-[#18c9ff]' : leaf.kind === 'tertiary' ? 'text-[#32ff2b]' : 'text-[#ddd8cf]'}`}>{label(leaf.label)}</button>)}</div>; })}
-        </div>)}</aside>
+  return (
+    <main className="auction-dashboard h-dvh overflow-hidden bg-[#3b3531] p-1.5 text-[#e7e2d8]">
+      <div className="mx-auto flex h-full max-w-[1440px] flex-col gap-1.5 overflow-hidden rounded-[7px] border border-[#514a45] bg-[#272220] p-1.5 shadow-[0_0_0_1px_#171413,0_8px_30px_rgba(0,0,0,.45)]">
+        <AuctionHeader
+          locale={locale}
+          realms={realms}
+          realmId={realmId}
+          disabled={interactionLocked}
+          favoritesOpen={favoritesOpen}
+          filterOpen={filterOpen}
+          query={query}
+          copy={copy}
+          minLevel={minLevel}
+          maxLevel={maxLevel}
+          minQuality={minQuality}
+          maxQuality={maxQuality}
+          expansionId={expansionId}
+          includeOutOfStock={includeOutOfStock}
+          label={label}
+          onRealmChange={setRealmId}
+          onFavoritesToggle={() => {
+            const next = !favoritesOpen;
+            setFavoritesOpen(next);
+            closeDetail();
+            if (next) void loadFavorites(realmId, locale, favorites);
+          }}
+          onQueryChange={setQuery}
+          onFilterToggle={() => setFilterOpen((value) => !value)}
+          onSearch={() => {
+            setFilterOpen(false);
+            search();
+          }}
+          onMinLevelChange={setMinLevel}
+          onMaxLevelChange={setMaxLevel}
+          onMinQualityChange={setMinQuality}
+          onMaxQualityChange={setMaxQuality}
+          onExpansionChange={setExpansionId}
+          onIncludeOutOfStockChange={setIncludeOutOfStock}
+        />
+        <div
+          aria-busy={interactionLocked}
+          className={`grid min-h-0 flex-1 gap-1.5 lg:grid-cols-[180px_minmax(0,1fr)] ${interactionLocked ? 'pointer-events-none' : ''}`}
+        >
+          <AuctionSidebar
+            categories={categories}
+            supportedCategories={supportedCategories}
+            activeCategory={activeRoot}
+            activeGroup={armorGroup}
+            activeLeaf={armorLeaf}
+            groups={activeGroups}
+            disabled={interactionLocked}
+            label={label}
+            onCategoryChange={(category) => {
+              if (category === 'WoW Token') {
+                void openWowToken();
+                return;
+              }
+              setActiveRoot(activeRoot === category ? '' : category);
+              setArmorGroup(null);
+              setArmorLeaf(null);
+            }}
+            onGroupChange={(group) => {
+              setArmorGroup(group);
+              setArmorLeaf(null);
+            }}
+            onLeafChange={setArmorLeaf}
+          />
 
-        <section className="relative min-h-0 overflow-hidden rounded-[5px] border border-[#151312] bg-[#151211] shadow-inner shadow-black/80">
-          {detail || detailLoading ? <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-3 border-b border-[#413b36] bg-[#211d1b] px-3 py-1.5"><button onClick={closeDetail} className="rounded border border-[#514a45] bg-[#332d2a] px-3 py-1 font-serif text-sm text-[#f3ce49]">{copy.back}</button><span className="text-xs text-[#8f8983]">{detailLoading ? copy.loadingItem : `${detail?.realm} · ${copy.updated} ${new Date(detail?.capturedAt ?? '').toLocaleString(locale)}`}</span></div>
-            {detail && <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_330px]">
-              <div className="min-h-0 overflow-y-auto p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h1 className="truncate font-serif text-xl text-[#f0d9a6]">{detail.name}</h1><p className="mt-1 text-xs text-[#8f8983]">{subclassLabel(detail.subclassId)} · {detail.inventoryType ? label(detail.inventoryType) : 'Unknown slot'} · Item {detail.id}</p></div><button aria-pressed={isFavorite(detail.id)} aria-label={isFavorite(detail.id) ? (locale === 'es-MX' ? 'Quitar de favoritos' : 'Remove from favorites') : (locale === 'es-MX' ? 'Añadir a favoritos' : 'Add to favorites')} onClick={() => toggleFavorite(detail)} className={`grid size-8 shrink-0 place-items-center rounded border text-lg ${isFavorite(detail.id) ? 'border-[#d4ce63] bg-[#4b4430] text-[#fff17a]' : 'border-[#514a45] bg-[#332d2a] text-[#8f8983] hover:text-[#fff17a]'}`}>★</button></div>
-                <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3"><h2 className="font-serif text-[#e6ca68]">{copy.baseStats}</h2><dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-sm"><dt>{copy.available}</dt><dd>{Number(detail.summary.quantity).toLocaleString()}</dd><dt>{copy.auctions}</dt><dd>{Number(detail.summary.listing_count).toLocaleString()}</dd><dt>{copy.current}</dt><dd>{formatGold(detail.summary.min_buyout_copper)}</dd><dt>{copy.variants}</dt><dd>{detail.variants.length.toLocaleString()}</dd></dl></section>
-                <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3"><h2 className="font-serif text-[#e6ca68]">{copy.variants}</h2><div className="mt-2 grid gap-2 sm:grid-cols-2">{detail.variants.map((variant, index) => <button key={variant.variantKey} onClick={() => { setSelectedVariant(variant.variantKey); setWantedQuantity(1); }} className={`rounded border p-2 text-left text-xs ${activeVariant?.variantKey === variant.variantKey ? 'border-[#aaa4df] bg-[#4a456f]' : 'border-[#413b36] bg-[#181514] hover:bg-[#302b28]'}`}><b className="block text-[#f0d9a6]">{variantLabel(variant, index)}</b><span>{formatGold(variant.minBuyoutCopper)} · {Number(variant.quantity).toLocaleString()} {copy.available.toLowerCase()}</span></button>)}</div></section>
-                <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3"><h2 className="font-serif text-[#e6ca68]">{copy.bulkPricing}</h2><div className="mt-2 grid max-w-md grid-cols-2 gap-2 text-sm"><label htmlFor="quantity">{copy.quantity}</label><input id="quantity" type="number" min="1" max={activeVariant?.quantity ?? 1} value={wantedQuantity} onChange={(event) => setWantedQuantity(Math.max(1, Math.min(Number(activeVariant?.quantity ?? 1), Number(event.target.value) || 1)))} className="rounded border border-[#514a45] bg-[#171514] px-2 py-1"/><span>{copy.unitPrice}</span><span>{formatGold(bulk.unit)}</span><span>{copy.totalPrice}</span><span>{formatGold(bulk.cost)}</span></div></section>
-                <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3"><div className="flex items-center justify-between gap-3"><h2 className="font-serif text-[#e6ca68]">{copy.priceHistory}</h2><select aria-label="History range" value={historyDays} onChange={(event) => setHistoryDays(Number(event.target.value))} className="rounded border border-[#514a45] bg-[#171514] px-2 py-1 text-sm"><option value={7}>7 {copy.days}</option><option value={30}>30 {copy.days}</option><option value={90}>90 {copy.days}</option><option value={365}>1 {copy.year}</option></select></div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4"><span>Low<br/>{formatGold(history?.stats.lowCopper ?? 0)}</span><span>Median<br/>{formatGold(history?.stats.medianCopper ?? 0)}</span><span>High<br/>{formatGold(history?.stats.highCopper ?? 0)}</span><span>Change<br/><b className={(history?.stats.changePercent ?? 0) <= 0 ? 'text-[#65dc76]' : 'text-[#ff7770]'}>{history?.stats.changePercent == null ? '—' : `${history.stats.changePercent >= 0 ? '+' : ''}${history.stats.changePercent.toFixed(1)}%`}</b></span></div><div className="mt-3"><PriceHistoryChart points={history?.points ?? []}/></div><p className="mt-2 text-xs text-[#8f8983]">{history?.stats.captures ?? 0} stored captures for this variant.</p>
-                </section>
-                <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3"><h2 className="font-serif text-[#e6ca68]">US Realm Comparison</h2><p className="mt-1 text-xs text-[#8f8983]">Collection queue: {comparison?.coverage.targetMonitored ?? 0} of {comparison?.coverage.targeted ?? 0} target auction houses · US catalog: {comparison?.coverage.total ?? 0}.</p><div className="mt-2 overflow-x-auto"><div className="min-w-[520px] text-sm"><div className="grid grid-cols-[1fr_130px_80px] border-b border-[#504841] py-1 text-[#dac364]"><span>Realm</span><span>Price</span><span>Available</span></div>{comparison?.realms.map((entry) => <div key={entry.connectedRealmId} className="grid grid-cols-[1fr_130px_80px] border-b border-[#302b28] py-1.5"><span className="truncate pr-3" title={entry.name}>{entry.name}</span><span>{formatGold(entry.minBuyoutCopper)}</span><span>{Number(entry.quantity).toLocaleString()}</span></div>)}{comparison && comparison.realms.length === 0 && <p className="py-4 text-[#9d968e]">No monitored realm currently lists this item.</p>}</div></div></section>
+          <section className="relative min-h-0 overflow-hidden rounded-[5px] border border-[#151312] bg-[#151211] shadow-inner shadow-black/80">
+            {detail || detailLoading ? (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex items-center gap-3 border-b border-[#413b36] bg-[#211d1b] px-3 py-1.5">
+                  <button
+                    onClick={closeDetail}
+                    className="rounded border border-[#514a45] bg-[#332d2a] px-3 py-1 font-serif text-sm text-[#f3ce49]"
+                  >
+                    {copy.back}
+                  </button>
+                  <span className="text-xs text-[#8f8983]">
+                    {detailLoading
+                      ? copy.loadingItem
+                      : `${detail?.realm} · ${copy.updated} ${new Date(detail?.capturedAt ?? '').toLocaleString(locale)}`}
+                  </span>
+                </div>
+                {detail && (
+                  <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_330px]">
+                    <div className="min-h-0 overflow-y-auto p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h1
+                            className="truncate font-serif text-xl"
+                            style={{
+                              color:
+                                qualityColors[detail.qualityType ?? ''] ??
+                                '#f0d9a6',
+                            }}
+                          >
+                            {detail.name}
+                          </h1>
+                          <p className="mt-1 text-xs text-[#8f8983]">
+                            {subclassLabel(detail.subclassId)} ·{' '}
+                            {detail.inventoryType
+                              ? label(detail.inventoryType)
+                              : 'Unknown slot'}{' '}
+                            · Item {detail.id}
+                          </p>
+                        </div>
+                        <button
+                          aria-pressed={isFavorite(detail.id)}
+                          aria-label={
+                            isFavorite(detail.id)
+                              ? locale === 'es-MX'
+                                ? 'Quitar de favoritos'
+                                : 'Remove from favorites'
+                              : locale === 'es-MX'
+                                ? 'Añadir a favoritos'
+                                : 'Add to favorites'
+                          }
+                          onClick={() => toggleFavorite(detail)}
+                          className={`grid size-8 shrink-0 place-items-center rounded border text-lg ${isFavorite(detail.id) ? 'border-[#d4ce63] bg-[#4b4430] text-[#fff17a]' : 'border-[#514a45] bg-[#332d2a] text-[#8f8983] hover:text-[#fff17a]'}`}
+                        >
+                          ★
+                        </button>
+                      </div>
+                      <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3">
+                        <h2 className="font-serif text-[#e6ca68]">
+                          {copy.baseStats}
+                        </h2>
+                        <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                          <dt>{copy.available}</dt>
+                          <dd>
+                            {Number(detail.summary.quantity).toLocaleString()}
+                          </dd>
+                          <dt>{copy.auctions}</dt>
+                          <dd>
+                            {Number(
+                              detail.summary.listing_count,
+                            ).toLocaleString()}
+                          </dd>
+                          <dt>{copy.current}</dt>
+                          <dd>
+                            {formatGold(detail.summary.min_buyout_copper)}
+                          </dd>
+                          <dt>{copy.variants}</dt>
+                          <dd>{detail.variants.length.toLocaleString()}</dd>
+                        </dl>
+                      </section>
+                      <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3">
+                        <h2 className="font-serif text-[#e6ca68]">
+                          {copy.variants}
+                        </h2>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {detail.variants.map((variant, index) => (
+                            <button
+                              key={variant.variantKey}
+                              onClick={() => {
+                                setSelectedVariant(variant.variantKey);
+                                setWantedQuantity(1);
+                              }}
+                              className={`rounded border p-2 text-left text-xs ${activeVariant?.variantKey === variant.variantKey ? 'border-[#aaa4df] bg-[#4a456f]' : 'border-[#413b36] bg-[#181514] hover:bg-[#302b28]'}`}
+                            >
+                              <b className="block text-[#f0d9a6]">
+                                {variantLabel(variant, index)}
+                              </b>
+                              <span>
+                                {formatGold(variant.minBuyoutCopper)} ·{' '}
+                                {Number(variant.quantity).toLocaleString()}{' '}
+                                {copy.available.toLowerCase()}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                      <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3">
+                        <h2 className="font-serif text-[#e6ca68]">
+                          {copy.bulkPricing}
+                        </h2>
+                        <div className="mt-2 grid max-w-md grid-cols-2 gap-2 text-sm">
+                          <label htmlFor="quantity">{copy.quantity}</label>
+                          <input
+                            id="quantity"
+                            type="number"
+                            min="1"
+                            max={activeVariant?.quantity ?? 1}
+                            value={wantedQuantity}
+                            onChange={(event) =>
+                              setWantedQuantity(
+                                Math.max(
+                                  1,
+                                  Math.min(
+                                    Number(activeVariant?.quantity ?? 1),
+                                    Number(event.target.value) || 1,
+                                  ),
+                                ),
+                              )
+                            }
+                            className="rounded border border-[#514a45] bg-[#171514] px-2 py-1"
+                          />
+                          <span>{copy.unitPrice}</span>
+                          <span>{formatGold(bulk.unit)}</span>
+                          <span>{copy.totalPrice}</span>
+                          <span>{formatGold(bulk.cost)}</span>
+                        </div>
+                      </section>
+                      <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <h2 className="font-serif text-[#e6ca68]">
+                            {copy.priceHistory}
+                          </h2>
+                          <select
+                            aria-label="History range"
+                            value={historyDays}
+                            onChange={(event) =>
+                              setHistoryDays(Number(event.target.value))
+                            }
+                            className="rounded border border-[#514a45] bg-[#171514] px-2 py-1 text-sm"
+                          >
+                            <option value={7}>7 {copy.days}</option>
+                            <option value={30}>30 {copy.days}</option>
+                            <option value={90}>90 {copy.days}</option>
+                            <option value={365}>1 {copy.year}</option>
+                          </select>
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                          <span>
+                            Low
+                            <br />
+                            {formatGold(history?.stats.lowCopper ?? 0)}
+                          </span>
+                          <span>
+                            Median
+                            <br />
+                            {formatGold(history?.stats.medianCopper ?? 0)}
+                          </span>
+                          <span>
+                            High
+                            <br />
+                            {formatGold(history?.stats.highCopper ?? 0)}
+                          </span>
+                          <span>
+                            Change
+                            <br />
+                            <b
+                              className={
+                                (history?.stats.changePercent ?? 0) <= 0
+                                  ? 'text-[#65dc76]'
+                                  : 'text-[#ff7770]'
+                              }
+                            >
+                              {history?.stats.changePercent == null
+                                ? '—'
+                                : `${history.stats.changePercent >= 0 ? '+' : ''}${history.stats.changePercent.toFixed(1)}%`}
+                            </b>
+                          </span>
+                        </div>
+                        <div className="mt-3">
+                          <PriceHistoryChart
+                            points={history?.points ?? []}
+                            locale={locale}
+                          />
+                        </div>
+                        <p className="mt-2 text-xs text-[#8f8983]">
+                          {history?.stats.captures ?? 0} stored captures for
+                          this variant.
+                        </p>
+                      </section>
+                      <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3">
+                        <h2 className="font-serif text-[#e6ca68]">
+                          US Realm Comparison
+                        </h2>
+                        <p className="mt-1 text-xs text-[#8f8983]">
+                          Collection queue:{' '}
+                          {comparison?.coverage.targetMonitored ?? 0} of{' '}
+                          {comparison?.coverage.targeted ?? 0} target auction
+                          houses · US catalog: {comparison?.coverage.total ?? 0}
+                          .
+                        </p>
+                        <div className="mt-2 overflow-x-auto">
+                          <div className="min-w-[520px] text-sm">
+                            <div className="grid grid-cols-[1fr_130px_80px] border-b border-[#504841] py-1 text-[#dac364]">
+                              <span>Realm</span>
+                              <span>Price</span>
+                              <span>Available</span>
+                            </div>
+                            {comparison?.realms.map((entry) => (
+                              <div
+                                key={entry.connectedRealmId}
+                                className="grid grid-cols-[1fr_130px_80px] border-b border-[#302b28] py-1.5"
+                              >
+                                <span
+                                  className="truncate pr-3"
+                                  title={entry.name}
+                                >
+                                  {entry.name}
+                                </span>
+                                <span>{formatGold(entry.minBuyoutCopper)}</span>
+                                <span>
+                                  {Number(entry.quantity).toLocaleString()}
+                                </span>
+                              </div>
+                            ))}
+                            {comparison && comparison.realms.length === 0 && (
+                              <p className="py-4 text-[#9d968e]">
+                                No monitored realm currently lists this item.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </section>
+                    </div>
+                    <aside className="min-h-0 overflow-y-auto border-l border-[#413b36] bg-[#181514]">
+                      <div className="sticky top-0 grid grid-cols-[1fr_76px_62px] border-b border-[#504841] bg-[#2b2623] px-3 py-2 text-xs text-[#dac364]">
+                        <span>{copy.unitPrice}</span>
+                        <span>{copy.available}</span>
+                        <span>{copy.auctions}</span>
+                      </div>
+                      {activeLevels.map((level) => (
+                        <div
+                          key={`${level.variantKey}-${level.unitPriceCopper}`}
+                          className="grid grid-cols-[1fr_76px_62px] border-b border-[#292421] px-3 py-2 text-xs"
+                        >
+                          <span>{formatGold(level.unitPriceCopper)}</span>
+                          <span>{Number(level.quantity).toLocaleString()}</span>
+                          <span>
+                            {Number(level.listingCount).toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </aside>
+                  </div>
+                )}
+                {detail && (
+                  <a
+                    aria-label={detail.name}
+                    href={wowheadHref(
+                      detail.id,
+                      detail.variants[0]?.bonusListIds ?? [],
+                      detail.variants[0]?.modifiers ?? [],
+                      detail.variants[0]?.effectiveItemLevel,
+                      locale,
+                    )}
+                    data-wowhead={wowheadData(
+                      detail.id,
+                      detail.variants[0]?.bonusListIds ?? [],
+                      detail.variants[0]?.modifiers ?? [],
+                      detail.variants[0]?.effectiveItemLevel,
+                      locale,
+                    )}
+                    data-wh-icon-size="large"
+                    onClick={(event) => event.preventDefault()}
+                    className="wow-detail-icon absolute left-5 top-[58px] z-20 block size-14 overflow-hidden rounded-full border-2 bg-[#111]"
+                    style={{
+                      borderColor:
+                        qualityColors[detail.qualityType ?? ''] ?? '#9d9d9d',
+                      boxShadow: `0 0 0 2px #090806, 0 0 14px ${qualityColors[detail.qualityType ?? ''] ?? '#9d9d9d'}`,
+                    }}
+                  />
+                )}
               </div>
-              <aside className="min-h-0 overflow-y-auto border-l border-[#413b36] bg-[#181514]"><div className="sticky top-0 grid grid-cols-[1fr_76px_62px] border-b border-[#504841] bg-[#2b2623] px-3 py-2 text-xs text-[#dac364]"><span>{copy.unitPrice}</span><span>{copy.available}</span><span>{copy.auctions}</span></div>{activeLevels.map((level) => <div key={`${level.variantKey}-${level.unitPriceCopper}`} className="grid grid-cols-[1fr_76px_62px] border-b border-[#292421] px-3 py-2 text-xs"><span>{formatGold(level.unitPriceCopper)}</span><span>{Number(level.quantity).toLocaleString()}</span><span>{Number(level.listingCount).toLocaleString()}</span></div>)}</aside>
-            </div>}
-          </div> : <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center border-b border-[#413b36] bg-[#211d1b] px-3 py-1.5 text-xs text-[#8f8983]"><span>{loading ? copy.loading : hasSearched ? total > items.length ? (locale === 'es-MX' ? `Mostrando ${items.length.toLocaleString()} de ${total.toLocaleString()} ${copy.results}` : `Showing ${items.length.toLocaleString()} of ${total.toLocaleString()} ${copy.results}`) : `${total.toLocaleString()} ${copy.results}` : ''}</span></div>
-            {hasSearched && <div className="grid grid-cols-[minmax(0,1fr)_56px_145px_96px_84px] border-b border-[#504841] bg-[#2b2623] px-3 py-1 text-xs text-[#dac364]">{sortHeader('name', copy.item)}{sortHeader('level', locale === 'es-MX' ? 'Niv.' : 'Lvl')}{sortHeader('price', copy.unitPrice)}{sortHeader('quantity', copy.available)}{sortHeader('listings', copy.auctions)}</div>}
-            <div className="min-h-0 flex-1 overflow-y-auto">{items.map((item, index) => <div key={`${item.id}-${item.variantKey}`} role="button" tabIndex={0} onClick={() => void openDetail(item.id, realmId, item.variantKey)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openDetail(item.id, realmId, item.variantKey); } }} className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_56px_145px_96px_84px] items-center border-b border-[#292421] px-3 py-2 text-left text-[13px] outline-none ${index % 2 ? 'bg-[#211d1b]' : 'bg-[#1c1917]'} hover:bg-[#38312b] focus:bg-[#38312b]`}><span className="flex min-w-0 items-start gap-1"><button aria-pressed={isFavorite(item.id)} aria-label={isFavorite(item.id) ? (locale === 'es-MX' ? 'Quitar de favoritos' : 'Remove from favorites') : (locale === 'es-MX' ? 'Añadir a favoritos' : 'Add to favorites')} onClick={(event) => { event.stopPropagation(); toggleFavorite(item); }} className={`mt-0.5 shrink-0 text-sm leading-none ${isFavorite(item.id) ? 'text-[#fff17a]' : 'text-[#6f6862] hover:text-[#fff17a]'}`}>★</button><span className="min-w-0"><a href={wowheadHref(item.id, item.bonusListIds, item.modifiers, item.effectiveItemLevel, locale)} data-wowhead={wowheadData(item.id, item.bonusListIds, item.modifiers, item.effectiveItemLevel, locale)} data-wh-icon-size="tiny" onClick={(event) => event.preventDefault()} className="block truncate font-normal no-underline" style={{ color: qualityColors[item.qualityType ?? ''] ?? '#e4d6b9' }}>{item.name}</a><small className="block truncate text-[#8b857f]">{subclassLabel(item.subclassId)}{item.inventoryType ? ` · ${label(item.inventoryType)}` : ''}{item.tertiaryStats.map((stat) => ` · ${label(statNames[stat])}`).join('')}</small></span></span><span>{item.effectiveItemLevel ?? item.itemLevel ?? '—'}</span><span>{formatGold(item.minBuyoutCopper)}</span><span>{Number(item.quantity).toLocaleString()}</span><span>{Number(item.listingCount).toLocaleString()}</span></div>)}{!loading && items.length === 0 && <p className="p-6 text-center text-sm text-[#b5aea4]">{hasSearched ? error || copy.noResults : copy.searchPrompt}</p>}</div>
-          </div>}
-          {showFavoritesHome && <div className="absolute inset-0 z-10 overflow-y-auto bg-[#151211] p-4">{favorites.length > 0 && <div className="mx-auto max-w-2xl"><h1 className="mb-3 text-lg text-[#f0d9a6]">{locale === 'es-MX' ? 'Favoritos' : 'Favorites'}</h1><div className="overflow-hidden rounded border border-[#413b36]">{favorites.map((favorite) => <button key={favorite.itemId} onClick={() => openFavorite(favorite)} className="flex w-full items-center justify-between gap-3 border-b border-[#292421] bg-[#1c1917] px-3 py-2 text-left text-[13px] last:border-b-0 hover:bg-[#38312b]"><span className="truncate text-[#e7e2d8]">★ {favorite.name}</span><span className="shrink-0 text-xs text-[#8f8983]">{label(categories.find((category) => (category === 'WoW Token' ? 'wow-token' : category === 'Miscellaneous' ? 'miscellaneous' : category === 'Quest Items' ? 'quest-items' : category === 'Battle Pets' ? 'battle-pets' : category === 'Housing' ? 'housing' : category === 'Profession Equipment' ? 'profession-equipment' : category === 'Recipes' ? 'recipes' : category === 'Trade Goods' ? 'trade-goods' : category === 'Glyphs' ? 'glyphs' : category === 'Consumables' ? 'consumables' : category === 'Item Enhancements' ? 'enhancements' : category === 'Gems' ? 'gems' : category === 'Containers' ? 'containers' : category === 'Weapons' ? 'weapons' : 'armor') === favorite.category) ?? '')}</span></button>)}</div></div>}</div>}
-          {activeRoot === 'WoW Token' && <div className="absolute inset-0 z-20 overflow-y-auto bg-[#151211] p-4"><div className="mx-auto max-w-3xl"><button onClick={() => { setActiveRoot(''); setWowToken(null); }} className="mb-3 rounded border border-[#d07140] bg-gradient-to-b from-[#b10d0d] to-[#680000] px-10 py-1 text-[13px] text-[#ffe759]">{copy.back}</button><div className="rounded border border-[#4d453f] bg-[#211d1b] p-4"><div className="flex items-center gap-4 border-b border-[#413b36] pb-4"><span className="grid size-14 place-items-center rounded-full border-2 border-[#a99f91] bg-[#171413] text-2xl text-[#f0d64c]">W</span><h1 className="text-2xl text-[#18c9ff]">{locale === 'es-MX' ? 'Ficha de WoW' : 'WoW Token'}</h1></div>{wowTokenLoading ? <p className="py-10 text-center text-[#b5aea4]">{copy.loading}</p> : wowToken?.latest ? <><section className="py-5"><h2 className="mb-3 border-b border-[#413b36] pb-2 text-[#e6ca68]">{locale === 'es-MX' ? 'Estadísticas base' : 'Base stats'}</h2><dl className="mx-auto grid max-w-md grid-cols-[1fr_auto] gap-x-6 gap-y-2 text-[13px]"><dt className="text-right text-[#e6ca68]">{locale === 'es-MX' ? 'Actual' : 'Current'}</dt><dd>{formatGold(wowToken.latest.currentCopper)}</dd><dt className="text-right text-[#e6ca68]">{locale === 'es-MX' ? 'Actualizado' : 'Updated'}</dt><dd>{new Date(wowToken.latest.updatedAt).toLocaleString(locale)}</dd><dt className="text-right text-[#e6ca68]">{locale === 'es-MX' ? 'Mediana (14 días)' : 'Median (14 days)'}</dt><dd>{wowToken.stats.medianCopper == null ? '—' : formatGold(wowToken.stats.medianCopper)}</dd><dt className="text-right text-[#e6ca68]">{locale === 'es-MX' ? 'Media (14 días)' : 'Mean (14 days)'}</dt><dd>{wowToken.stats.meanCopper == null ? '—' : formatGold(wowToken.stats.meanCopper)}</dd><dt className="text-right text-[#e6ca68]">{locale === 'es-MX' ? 'Capturas (14 días)' : 'Captures (14 days)'}</dt><dd>{wowToken.stats.captures}</dd></dl></section><section><h2 className="mb-3 border-b border-[#413b36] pb-2 text-[#e6ca68]">{locale === 'es-MX' ? 'Historial de 14 días' : '14-day history'}</h2><PriceHistoryChart points={wowToken.points}/></section></> : <p className="py-10 text-center text-[#b5aea4]">{locale === 'es-MX' ? 'El precio oficial de la Ficha de WoW aún no está disponible.' : 'Official WoW Token pricing is not available yet.'}</p>}</div></div></div>}
-        </section>
+            ) : (
+              <ResultsTable
+                items={displayedItems}
+                locale={locale}
+                statusText={resultsStatus}
+                showHeader={hasSearched || favoritesOpen}
+                loading={loading || favoritesLoading}
+                emptyText={resultsEmptyText}
+                sort={applied}
+                labels={{
+                  price: copy.unitPrice,
+                  item: copy.item,
+                  level: locale === 'es-MX' ? 'Niv.' : 'Lvl',
+                  available: copy.available,
+                  auctions: copy.auctions,
+                }}
+                qualityColor={(quality) =>
+                  qualityColors[quality ?? ''] ?? '#e4d6b9'
+                }
+                qualityTier={(item) =>
+                  item.craftingQualityTier ??
+                  craftingQualityByItem.get(`${item.id}-${item.variantKey}`)
+                }
+                isFavorite={isFavorite}
+                onSort={changeSort}
+                onOpen={(item) =>
+                  void openDetail(
+                    item.id,
+                    realmId,
+                    item.variantKey,
+                    locale,
+                    categoryPath(categoryForItemClass(item.itemClassId)),
+                  )
+                }
+                onToggleFavorite={toggleFavorite}
+              />
+            )}
+            {activeRoot === 'WoW Token' && (
+              <WowTokenView
+                data={wowToken}
+                loading={wowTokenLoading}
+                locale={locale}
+                onBack={() => {
+                  setActiveRoot('');
+                  setWowToken(null);
+                }}
+              />
+            )}
+          </section>
+        </div>
+        {showCollected && (
+          <div
+            role="status"
+            className="fixed bottom-8 left-1/2 z-[60] -translate-x-1/2 rounded border border-[#81c46a] bg-[#1e3b1b] px-4 py-2 text-sm text-[#e7f6d8] shadow-[0_6px_20px_#000]"
+          >
+            ✓{' '}
+            {locale === 'es-MX'
+              ? 'Carga completada correctamente'
+              : 'Loaded successfully'}
+          </div>
+        )}
+        <footer className="flex h-5 min-w-0 items-center gap-3 px-2 text-[#c9c2b9]">
+          {isCollecting && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex min-w-0 flex-1 items-center gap-1.5"
+            >
+              <span className="inline-block size-2.5 shrink-0 animate-spin rounded-full border-2 border-[#d7bd3d] border-t-transparent" />
+              <span className="shrink-0 text-[#cbc3b7]">
+                {locale === 'es-MX' ? 'Actualizando' : 'Updating'}{' '}
+                {collectorHealth?.targetRealm ?? ''}
+              </span>
+              <div className="relative h-1 min-w-12 max-w-72 flex-1 overflow-hidden rounded bg-[#302b28]">
+                <div
+                  className={
+                    progress?.stage === 'Downloading auctions'
+                      ? 'h-full w-1/3 animate-[pulse_1s_ease-in-out_infinite] bg-[#d7bd3d]'
+                      : 'h-full bg-[#d7bd3d] transition-[width] duration-300'
+                  }
+                  style={
+                    progress?.stage === 'Downloading auctions'
+                      ? undefined
+                      : { width: `${progressPercent}%` }
+                  }
+                />
+              </div>
+              <span className="hidden max-w-32 truncate text-[#8f8983] sm:inline">
+                {progress?.stage ?? collectorHealth?.detail ?? ''}
+                {progress?.stage === 'Hydrating item metadata'
+                  ? ` ${progress?.current}/${progress?.total}`
+                  : ''}
+              </span>
+            </div>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-3">
+            <select
+              aria-label="Language"
+              value={locale}
+              onChange={(event) => changeLocale(event.target.value as Locale)}
+              className="rounded border-0 bg-[#26211f] px-1.5 text-[#c9c2b9]"
+            >
+              <option value="en-US">English (US)</option>
+              <option value="es-MX">Español (MX)</option>
+            </select>
+            <span>{copy.home}</span>
+            <span>{copy.terms}</span>
+            <span>{copy.privacy}</span>
+            <span>{copy.api}</span>
+          </div>
+        </footer>
       </div>
-      {showCollected && <div role="status" className="fixed bottom-8 left-1/2 z-[60] -translate-x-1/2 rounded border border-[#81c46a] bg-[#1e3b1b] px-4 py-2 text-sm text-[#e7f6d8] shadow-[0_6px_20px_#000]">✓ {locale === 'es-MX' ? 'Carga completada correctamente' : 'Loaded successfully'}</div>}
-      <footer className="flex h-5 min-w-0 items-center gap-3 px-2 text-[#c9c2b9]">{isCollecting && <div role="status" aria-live="polite" className="flex min-w-0 flex-1 items-center gap-1.5"><span className="inline-block size-2.5 shrink-0 animate-spin rounded-full border-2 border-[#d7bd3d] border-t-transparent"/><span className="shrink-0 text-[#cbc3b7]">{locale === 'es-MX' ? 'Actualizando' : 'Updating'} {collectorHealth?.targetRealm ?? ''}</span><div className="relative h-1 min-w-12 max-w-72 flex-1 overflow-hidden rounded bg-[#302b28]"><div className={progress?.stage === 'Downloading auctions' ? 'h-full w-1/3 animate-[pulse_1s_ease-in-out_infinite] bg-[#d7bd3d]' : 'h-full bg-[#d7bd3d] transition-[width] duration-300'} style={progress?.stage === 'Downloading auctions' ? undefined : { width: `${progressPercent}%` }}/></div><span className="hidden max-w-32 truncate text-[#8f8983] sm:inline">{progress?.stage ?? collectorHealth?.detail ?? ''}{progress?.stage === 'Hydrating item metadata' ? ` ${progress?.current}/${progress?.total}` : ''}</span></div>}<div className="ml-auto flex shrink-0 items-center gap-3"><select aria-label="Language" value={locale} onChange={(event) => changeLocale(event.target.value as Locale)} className="rounded border-0 bg-[#26211f] px-1.5 text-[#c9c2b9]"><option value="en-US">English (US)</option><option value="es-MX">Español (MX)</option></select><span>{copy.home}</span><span>{copy.terms}</span><span>{copy.privacy}</span><span>{copy.api}</span></div></footer>
-    </div>
-  </main>;
+    </main>
+  );
 }

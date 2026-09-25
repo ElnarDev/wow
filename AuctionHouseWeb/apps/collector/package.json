@@ -3,6 +3,7 @@
     "private": true,
     "type": "module",
     "scripts": {
+        "test": "node --test",
         "test:fixture": "node scripts/verify-fixture.mjs"
     },
     "dependencies": {
