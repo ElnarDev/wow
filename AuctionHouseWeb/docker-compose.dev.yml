@@ -1,6 +1,11 @@
 services:
   web:
-    command: npm run dev -- --host 0.0.0.0 --port 3000
+    # Remove any stale dev-server lock left on the bind-mounted host folder
+    # before starting. The lock file records a PID from the previous
+    # container's PID namespace; since container restarts reset PIDs from a
+    # low number, a fresh process can coincidentally reuse that same PID and
+    # get incorrectly rejected as "another server already running".
+    command: sh -c "rm -rf .vinext/dev && npm run dev -- --host 0.0.0.0 --port 3000"
     environment:
       VITE_USE_POLLING: 'true'
     volumes:
