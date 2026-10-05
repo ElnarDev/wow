@@ -19,6 +19,10 @@ import { PriceHistoryChart } from '../features/auction/components/price-history-
 import { ResultsTable } from '../features/auction/components/results-table';
 import { WowTokenView } from '../features/auction/components/wow-token-view';
 import { useStoredFavorites } from '../features/auction/hooks/use-stored-favorites';
+import { marketKeyFor } from '../features/auction/market-identity';
+import { parseOptionalInteger, validRange } from '../features/auction/filter-validation';
+import { writeSearchState } from '../features/auction/navigation-state';
+import { selectInitialRealm } from '../features/auction/realm-selection';
 import type {
   AuctionItem as ArmorItem,
   AuctionVariant as Variant,
@@ -828,6 +832,7 @@ export function AuctionDashboard() {
     favorites,
     setFavorites,
     loaded: favoritesLoaded,
+    storageError: favoritesStorageError,
   } = useStoredFavorites();
   const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [favoriteItems, setFavoriteItems] = useState<ArmorItem[]>([]);
@@ -939,18 +944,24 @@ export function AuctionDashboard() {
                               : activeRoot === 'Weapons'
                                 ? weaponGroups
                                 : armorGroups;
-  const isFavorite = (itemId: number) =>
-    favorites.some((favorite) => favorite.itemId === itemId);
+  const isFavorite = (itemId: number, variantKey: string) => {
+    const marketKey = marketKeyFor(itemId, variantKey);
+    return marketKey !== null && favorites.some((favorite) => favorite.marketKey === marketKey);
+  };
   const toggleFavorite = (
-    item: Pick<ArmorItem, 'id' | 'name'> | Pick<ItemDetail, 'id' | 'name'>,
+    item: Pick<ArmorItem, 'id' | 'name' | 'variantKey'>,
   ) => {
     const itemId = Number(item.id);
+    const marketKey = marketKeyFor(itemId, item.variantKey);
+    if (marketKey === null) return;
     setFavorites((current) =>
-      current.some((favorite) => favorite.itemId === itemId)
-        ? current.filter((favorite) => favorite.itemId !== itemId)
+      current.some((favorite) => favorite.marketKey === marketKey)
+        ? current.filter((favorite) => favorite.marketKey !== marketKey)
         : [
             {
+              marketKey,
               itemId,
+              variantKey: item.variantKey,
               category:
                 detail?.id === itemId
                   ? categoryPath(categoryForItemClass(detail.itemClassId))
@@ -962,7 +973,7 @@ export function AuctionDashboard() {
           ].slice(0, 100),
     );
     setFavoriteItems((current) =>
-      current.filter((favorite) => Number(favorite.id) !== itemId),
+      current.filter((favorite) => marketKeyFor(favorite.id, favorite.variantKey) !== marketKey),
     );
   };
   const openWowToken = async () => {
@@ -1002,7 +1013,7 @@ export function AuctionDashboard() {
         const data = await auctionApi.favorites(
           targetRealmId,
           targetLocale,
-          source.map((favorite) => favorite.itemId),
+          source,
         );
         setFavoriteItems(
           data.items.map((item) => ({
@@ -1112,11 +1123,11 @@ export function AuctionDashboard() {
       );
       const data = { ...sourceData, id: Number(sourceData.id) };
       setDetail(data);
-      setSelectedVariant(
+      const resolvedVariantKey =
         data.variants.some((variant) => variant.variantKey === targetVariantKey)
           ? targetVariantKey
-          : (data.variants[0]?.variantKey ?? ''),
-      );
+          : (data.variants[0]?.variantKey ?? '');
+      setSelectedVariant(resolvedVariantKey);
       setWantedQuantity(1);
       setActiveRoot(categoryForItemClass(data.itemClassId));
       setArmorGroup(null);
@@ -1126,7 +1137,7 @@ export function AuctionDashboard() {
       url.searchParams.set('realm', String(targetRealmId));
       window.history.replaceState(null, '', url);
       void auctionApi
-        .comparison(targetPath, itemId)
+        .comparison(targetPath, itemId, resolvedVariantKey)
         .then((data) => setComparison(data))
         .catch(() => setComparison(null));
     } catch {
@@ -1191,37 +1202,56 @@ export function AuctionDashboard() {
     previousCollectorStatus.current = status;
   }, [collectorHealth?.status]);
   useEffect(() => {
+    if (favoritesStorageError)
+      setError(locale === 'es-MX' ? 'Los favoritos no se pueden guardar en este navegador.' : 'Favorites cannot be saved in this browser.');
+  }, [favoritesStorageError, locale]);
+  useEffect(() => {
+    let active = true;
     const savedLocale = window.localStorage.getItem('auction-house-locale');
-    if (savedLocale === 'es-MX' || savedLocale === 'en-US')
-      setLocale(savedLocale);
+    const initialLocale: Locale =
+      savedLocale === 'es-MX' || savedLocale === 'en-US'
+        ? savedLocale
+        : 'en-US';
+    if (initialLocale !== locale)
+      setLocale(initialLocale);
     auctionApi
       .realms()
       .then((data) => {
+        if (!active) return;
         setRealms(data.realms);
-        const urlRealm = Number(
-          new URL(window.location.href).searchParams.get('realm'),
-        );
-        const saved = Number(
+        const url = new URL(window.location.href);
+        const selection = selectInitialRealm(
+          data.realms,
+          url.searchParams.get('realm'),
           window.localStorage.getItem('auction-house-realm-id'),
         );
-        const savedRealm = data.realms.find((realm) => realm.id === saved);
-        const defaultRealm = data.realms.find((realm) => realm.isDefault);
-        setRealmId(
-          (
-            data.realms.find((realm) => realm.id === urlRealm) ??
-            (savedRealm?.id === 0 && !savedRealm.isDefault
-              ? undefined
-              : savedRealm) ??
-            defaultRealm ??
-            data.realms[0]
-          )?.id ?? null,
-        );
+        setRealmId(selection.realmId);
+        if (selection.realmId === null)
+          setError(
+            initialLocale === 'es-MX'
+              ? 'No hay reinos de mercado disponibles. Inténtalo de nuevo más tarde.'
+              : 'No marketplace realms are available. Please try again later.',
+          );
+        else if (selection.invalidUrl)
+          setError(
+            initialLocale === 'es-MX'
+              ? 'El reino solicitado no está disponible; se seleccionó un reino guardado o predeterminado.'
+              : 'The requested realm is unavailable; a saved or default realm was selected.',
+          );
         setLoading(false);
       })
       .catch(() => {
-        setError('Unable to load realms.');
+        if (!active) return;
+        setError(
+          initialLocale === 'es-MX'
+            ? 'No fue posible cargar los reinos.'
+            : 'Unable to load realms.',
+        );
         setLoading(false);
       });
+    return () => {
+      active = false;
+    };
   }, []);
   const changeLocale = (nextLocale: Locale) => {
     setLocale(nextLocale);
@@ -1279,6 +1309,12 @@ export function AuctionDashboard() {
       (!supportedCategories.has(activeRoot) && !query.trim())
     )
       return;
+    const parsedMinLevel = parseOptionalInteger(minLevel);
+    const parsedMaxLevel = parseOptionalInteger(maxLevel);
+    if (!validRange(parsedMinLevel, parsedMaxLevel) || !validRange(minQuality, maxQuality)) {
+      setError(locale === 'es-MX' ? 'El valor mínimo no puede superar el máximo.' : 'The minimum value cannot exceed the maximum.');
+      return;
+    }
     const group = activeGroups.find((entry) => entry.label === groupLabel);
     const leaf = group?.leaves.find((entry) => entry.label === leafLabel);
     const state: SearchState = {
@@ -1292,8 +1328,8 @@ export function AuctionDashboard() {
         : (group?.subclassIds ?? []),
       inventoryTypes: leaf?.types ?? [],
       expansionId,
-      minLevel: minLevel === '' ? null : Number(minLevel),
-      maxLevel: maxLevel === '' ? null : Number(maxLevel),
+      minLevel: parsedMinLevel,
+      maxLevel: parsedMaxLevel,
       minQuality,
       maxQuality,
       includeOutOfStock,
@@ -1303,6 +1339,7 @@ export function AuctionDashboard() {
     setFavoritesOpen(false);
     setApplied(state);
     setHasSearched(true);
+    window.history.pushState(null, '', writeSearchState(new URL(window.location.href), realmId, state));
     closeDetail();
     if (leaf?.kind === 'special') {
       setItems([]);
@@ -1382,30 +1419,6 @@ export function AuctionDashboard() {
     return { bought, cost, unit: bought ? Math.round(cost / bought) : 0 };
   }, [activeLevels, wantedQuantity]);
   const displayedItems = favoritesOpen ? favoriteItems : items;
-  const craftingQualityByItem = useMemo(() => {
-    const groups = new Map<string, ArmorItem[]>();
-    for (const item of displayedItems)
-      groups.set(item.name, [...(groups.get(item.name) ?? []), item]);
-    const tiers = new Map<string, number>();
-    for (const group of groups.values()) {
-      const distinctLevels = [
-        ...new Set(
-          group.map((item) =>
-            Number(item.itemLevel ?? item.effectiveItemLevel ?? 0),
-          ),
-        ),
-      ].sort((left, right) => left - right);
-      if (distinctLevels.length < 2) continue;
-      for (const item of group)
-        tiers.set(
-          `${item.id}-${item.variantKey}`,
-          distinctLevels.indexOf(
-            Number(item.itemLevel ?? item.effectiveItemLevel ?? 0),
-          ) + 1,
-        );
-    }
-    return tiers;
-  }, [displayedItems]);
   const isCollecting =
     collectorHealth?.status === 'collecting' ||
     collectorHealth?.status === 'starting';
@@ -1548,9 +1561,9 @@ export function AuctionDashboard() {
                           </p>
                         </div>
                         <button
-                          aria-pressed={isFavorite(detail.id)}
+                          aria-pressed={activeVariant ? isFavorite(detail.id, activeVariant.variantKey) : false}
                           aria-label={
-                            isFavorite(detail.id)
+                            activeVariant && isFavorite(detail.id, activeVariant.variantKey)
                               ? locale === 'es-MX'
                                 ? 'Quitar de favoritos'
                                 : 'Remove from favorites'
@@ -1558,8 +1571,14 @@ export function AuctionDashboard() {
                                 ? 'Añadir a favoritos'
                                 : 'Add to favorites'
                           }
-                          onClick={() => toggleFavorite(detail)}
-                          className={`grid size-8 shrink-0 place-items-center rounded border text-lg ${isFavorite(detail.id) ? 'border-[#d4ce63] bg-[#4b4430] text-[#fff17a]' : 'border-[#514a45] bg-[#332d2a] text-[#8f8983] hover:text-[#fff17a]'}`}
+                          onClick={() => {
+                            if (activeVariant) toggleFavorite({
+                              id: detail.id,
+                              name: detail.name,
+                              variantKey: activeVariant.variantKey,
+                            });
+                          }}
+                          className={`grid size-8 shrink-0 place-items-center rounded border text-lg ${activeVariant && isFavorite(detail.id, activeVariant.variantKey) ? 'border-[#d4ce63] bg-[#4b4430] text-[#fff17a]' : 'border-[#514a45] bg-[#332d2a] text-[#8f8983] hover:text-[#fff17a]'}`}
                         >
                           ★
                         </button>
@@ -1818,10 +1837,7 @@ export function AuctionDashboard() {
                 qualityColor={(quality) =>
                   qualityColors[quality ?? ''] ?? '#e4d6b9'
                 }
-                qualityTier={(item) =>
-                  item.craftingQualityTier ??
-                  craftingQualityByItem.get(`${item.id}-${item.variantKey}`)
-                }
+                qualityTier={() => undefined}
                 isFavorite={isFavorite}
                 onSort={changeSort}
                 onOpen={(item) =>

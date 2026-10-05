@@ -12,8 +12,13 @@ const tertiaryBonusIds = new Map([
 ]);
 
 export const itemLevelDataBuild = bonusIdData.build;
+export const itemLevelDataSource = 'lib-bonus-id';
 
 export function normalizeVariant(auctionItem = {}) {
+  const petValue = (snake, camel) => {
+    const value = Number(auctionItem[snake] ?? auctionItem[camel]);
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  };
   const bonusListIds = [...new Set(auctionItem.bonus_lists ?? [])]
     .map(Number)
     .filter((bonusId) => Number.isSafeInteger(bonusId) && bonusId > 0)
@@ -23,11 +28,17 @@ export function normalizeVariant(auctionItem = {}) {
     .filter((modifier) => Number.isSafeInteger(modifier.type) && Number.isFinite(modifier.value))
     .sort((left, right) => left.type - right.type || left.value - right.value);
   const itemContext = Number.isSafeInteger(Number(auctionItem.context)) ? Number(auctionItem.context) : null;
+  const pet = {
+    speciesId: petValue('pet_species_id', 'petSpeciesId'),
+    breedId: petValue('pet_breed_id', 'petBreedId'),
+    level: petValue('pet_level', 'petLevel'),
+    qualityId: petValue('pet_quality_id', 'petQualityId'),
+  };
   const tertiaryStats = [...tertiaryBonusIds]
     .filter(([, ids]) => bonusListIds.some((id) => ids.has(id)))
     .map(([stat]) => stat);
-  const canonical = JSON.stringify({ itemContext, bonusListIds, modifiers });
-  return { variantKey: createHash('sha256').update(canonical).digest('hex'), itemContext, bonusListIds, modifiers, tertiaryStats };
+  const canonical = JSON.stringify({ itemContext, bonusListIds, modifiers, pet });
+  return { variantKey: createHash('sha256').update(canonical).digest('hex'), itemContext, bonusListIds, modifiers, tertiaryStats, pet: pet.speciesId === null ? null : pet };
 }
 
 export function effectiveItemLevel(itemId, bonusListIds = [], modifiers = []) {

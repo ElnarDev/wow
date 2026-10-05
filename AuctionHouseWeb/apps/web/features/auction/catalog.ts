@@ -74,11 +74,20 @@ const categoriesByItemClass: Record<number, string> = {
   20: 'Housing',
 };
 
-export const categories = Object.keys(categoryPaths);
+// Keep the market navigation independent from object insertion order.
+export const categories = [
+  'Armor', 'Weapons', 'Containers', 'Gems', 'Item Enhancements',
+  'Consumables', 'Glyphs', 'Trade Goods', 'Recipes',
+  'Profession Equipment', 'Housing', 'Battle Pets', 'Quest Items',
+  'Miscellaneous', 'WoW Token',
+];
 export const supportedCategories = new Set(categories);
 
 export const categoryPath = (category: string) => categoryPaths[category] ?? 'armor';
-export const categoryForItemClass = (itemClassId: number | null | undefined) => categoriesByItemClass[Number(itemClassId)] ?? 'Armor';
+export const categoryForItemClass = (itemClassId: number | null | undefined) => {
+  if (itemClassId === null || itemClassId === undefined) return 'Miscellaneous';
+  return categoriesByItemClass[itemClassId] ?? 'Miscellaneous';
+};
 
 export const initialSearch: SearchState = {
   category: '',

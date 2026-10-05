@@ -8,7 +8,9 @@ import type {
   Realm,
   SearchState,
   WowTokenData,
+  Favorite,
 } from './types';
+import { normalizeRealms } from './realm-selection';
 
 const collectorUrl = 'http://localhost:3501';
 
@@ -20,10 +22,13 @@ async function getJson<T>(path: string): Promise<T> {
 
 export const auctionApi = {
   health: () => getJson<CollectorHealth>('/healthz'),
-  realms: () => getJson<{ realms: Realm[] }>('/api/realms'),
+  async realms() {
+    const data = await getJson<{ realms: unknown }>('/api/realms');
+    return { realms: normalizeRealms(data.realms) as Realm[] };
+  },
   wowToken: () => getJson<WowTokenData>('/api/wow-token'),
-  favorites(realmId: number, locale: Locale, itemIds: number[]) {
-    const params = new URLSearchParams({ realmId: String(realmId), locale, ids: itemIds.join(',') });
+  favorites(realmId: number, locale: Locale, favorites: Favorite[]) {
+    const params = new URLSearchParams({ realmId: String(realmId), locale, favorites: favorites.map((favorite) => favorite.marketKey).join(',') });
     return getJson<{ items: AuctionItem[] }>(`/api/favorites?${params}`);
   },
   search(path: string, realmId: number, state: SearchState, page: number, limit: number, locale: Locale) {
@@ -44,8 +49,10 @@ export const auctionApi = {
     const params = new URLSearchParams({ realmId: String(realmId), locale });
     return getJson<ItemDetail>(`/api/${path}/${itemId}?${params}`);
   },
-  comparison(path: string, itemId: number) {
-    return getJson<ComparisonData>(`/api/${path}/${itemId}/comparison`);
+  comparison(path: string, itemId: number, variantKey?: string) {
+    const params = new URLSearchParams();
+    if (variantKey) params.set('variantKey', variantKey);
+    return getJson<ComparisonData>(`/api/${path}/${itemId}/comparison?${params}`);
   },
   history(path: string, itemId: number, realmId: number, days: number, variantKey?: string) {
     const params = new URLSearchParams({ realmId: String(realmId), days: String(days) });

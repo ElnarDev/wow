@@ -2,6 +2,7 @@ export type Locale = 'en-US' | 'es-MX';
 
 export type Realm = { id: number; name: string; isDefault: boolean };
 export type Modifier = { type: number; value: number };
+export type BattlePet = { speciesId: number; breedId: number | null; level: number | null; qualityId: number | null };
 
 export type AuctionItem = {
   id: number;
@@ -20,6 +21,7 @@ export type AuctionItem = {
   bonusListIds: number[];
   modifiers: Modifier[];
   tertiaryStats: number[];
+  petData?: BattlePet | null;
   minBuyoutCopper: number;
   quantity: number;
   listingCount: number;
@@ -34,6 +36,7 @@ export type AuctionVariant = {
   bonusListIds: number[];
   modifiers: Modifier[];
   tertiaryStats: number[];
+  petData?: BattlePet | null;
   effectiveItemLevel: number | null;
   minBuyoutCopper: number;
   quantity: number;
@@ -61,8 +64,18 @@ export type HistoryData = { points: HistoryPoint[]; stats: { captures: number; l
 export type WowTokenData = { latest: { currentCopper: number; updatedAt: string } | null; points: Array<Pick<HistoryPoint, 'capturedAt' | 'minBuyoutCopper'>>; stats: { captures: number; medianCopper: number | null; meanCopper: number | null } };
 export type RealmPrice = { connectedRealmId: number; name: string; minBuyoutCopper: number; quantity: number; listingCount: number; capturedAt: string };
 export type ComparisonData = { realms: RealmPrice[]; coverage: { monitored: number; total: number; targeted: number; targetMonitored: number } };
-export type Favorite = { itemId: number; category: string; name: string; addedAt: string };
-export type CollectorHealth = { status: 'starting' | 'collecting' | 'ready' | 'error'; processedAt?: string | null; armorListings?: number; detail?: string | null; targetRealm?: string | null; progress?: { stage: string; current: number; total: number } };
+export type Favorite = {
+  /** Stable technical identity; legacy item-only favorites use `itemId:*`. */
+  marketKey: string;
+  /** Commercial grouping identity. */
+  itemId: number;
+  /** Null only for a migrated item-only favorite. */
+  variantKey: string | null;
+  category: string;
+  name: string;
+  addedAt: string;
+};
+export type CollectorHealth = { status: 'starting' | 'collecting' | 'ready' | 'error'; processedAt?: string | null; armorListings?: number; detail?: string | null; targetRealm?: string | null; markets?: { connected: { marketScope: 'connected'; sourceLastModified?: string | null; unchanged?: boolean }; regional: { marketScope: 'regional'; sourceLastModified?: string | null; unchanged?: boolean } } | null; progress?: { stage: string; current: number; total: number } };
 
 export type CategoryLeaf = { label: string; subclassIds: number[]; types?: string[]; kind?: 'special' | 'tertiary'; bonusStat?: number };
 export type CategoryGroup = { label: string; subclassIds: number[]; leaves: CategoryLeaf[] };

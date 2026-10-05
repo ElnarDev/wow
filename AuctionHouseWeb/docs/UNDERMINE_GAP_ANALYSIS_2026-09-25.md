@@ -202,3 +202,22 @@ Ejecutar B02/B03 con un caso disponible y uno agotado cuando existan. En todas: 
 Primero A06 + A02 + A01: pruebas de caracterización, arranque fiable y contrato de identidad. Después B01/B07: un favorito debe conservar exactamente su variante, icono, rareza y rango al abrir la web desde cero. En paralelo conceptual, cerrar E07 antes de comprometer equivalencia exacta de funciones todavía no observadas. No iniciar Deals/arbitraje hasta tener A03 y C05.
 
 Definición de terminado por tarea: evidencia real, prueba focalizada, UI/endpoint coherentes, error y vacío cubiertos, documentación actualizada. HTTP 200 por sí solo no demuestra corrección funcional.
+
+## Seguimiento de implementación
+
+Actualizado el 26 de septiembre de 2026. La auditoría anterior conserva su condición de inventario de brechas al momento de realizarse.
+
+| Tarea | Estado | Evidencia de cierre |
+|---|---|---|
+| A06 | Completada | Pruebas de caracterización sin acceso a PostgreSQL para H01/H03/H04/H06/H08. |
+| A02 | Completada | Normalización de IDs de reino y selección URL → guardado → predeterminado, con fallback explicado. |
+| A01 | Completada | Identidad `itemId:variantKey`, migración no destructiva de favoritos heredados y uso coherente en favoritos, detalle, historial y comparación. |
+| A03 | Completada | Capturas independientes `connected` y `regional`, timestamp de origen por ámbito y publicación sólo al completar la ingesta. |
+| A04 | Completada | Se eliminó la inferencia de tier por nombre; las respuestas identifican fuente y build del nivel efectivo. |
+| A05 | Completada | Especie, raza, nivel y calidad de mascota forman parte de la variante persistida y de su identidad. |
+| B01 | Completada | Favoritos versionados, migración de formato heredado, error de almacenamiento y sincronización entre pestañas. |
+| B07 | Completada | Componente común de identidad visual para resultados, con icono de 22 px, borde de rareza, nombre, badge y fallback. |
+| B02 | En progreso | Orden explícito de las 15 categorías y fallback seguro para clase nula; falta la validación de casos disponibles/agotados por rama. |
+| B03 | En progreso | Validación de rangos de nivel y rareza antes de buscar; falta persistencia URL y matriz por categoría. |
+
+Las comprobaciones automatizadas pasan con `npm test` en `apps/collector` y `npm run build` en `apps/web`. La prueba de recorrido con contenedores queda pendiente de disponibilidad de Docker Desktop y se abordará dentro de la validación E05/E07.

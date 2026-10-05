@@ -1,41 +1,45 @@
 import { useEffect, useState } from 'react';
 import { favoritesStorageKey } from '../catalog';
+import { parseStoredFavorites, serializeFavorites } from '../market-identity';
 import type { Favorite } from '../types';
-
-function parseFavorites(value: string | null): Favorite[] {
-  const parsed = JSON.parse(value ?? '[]') as unknown;
-  if (!Array.isArray(parsed)) return [];
-
-  return parsed.flatMap((favorite) => {
-    if (typeof favorite !== 'object' || favorite === null) return [];
-    const candidate = favorite as Favorite;
-    const itemId = Number(candidate.itemId);
-    const valid = Number.isSafeInteger(itemId)
-      && itemId > 0
-      && typeof candidate.category === 'string'
-      && typeof candidate.name === 'string'
-      && typeof candidate.addedAt === 'string';
-    return valid ? [{ ...candidate, itemId }] : [];
-  }).slice(0, 100);
-}
 
 export function useStoredFavorites() {
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [storageError, setStorageError] = useState(false);
 
   useEffect(() => {
     try {
-      setFavorites(parseFavorites(window.localStorage.getItem(favoritesStorageKey)));
+      setFavorites(parseStoredFavorites(window.localStorage.getItem(favoritesStorageKey)) as Favorite[]);
     } catch {
-      window.localStorage.removeItem(favoritesStorageKey);
+      setStorageError(true);
     } finally {
       setLoaded(true);
     }
   }, []);
 
   useEffect(() => {
-    if (loaded) window.localStorage.setItem(favoritesStorageKey, JSON.stringify(favorites));
-  }, [favorites, loaded]);
+    if (!loaded || storageError) return;
+    try {
+      window.localStorage.setItem(favoritesStorageKey, serializeFavorites(favorites));
+    } catch {
+      setStorageError(true);
+    }
+  }, [favorites, loaded, storageError]);
 
-  return { favorites, setFavorites, loaded };
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key !== favoritesStorageKey || event.storageArea !== window.localStorage) return;
+      try {
+        setFavorites(parseStoredFavorites(event.newValue) as Favorite[]);
+        setStorageError(false);
+      } catch {
+        setStorageError(true);
+      }
+    };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, []);
+
+  return { favorites, setFavorites, loaded, storageError };
 }
