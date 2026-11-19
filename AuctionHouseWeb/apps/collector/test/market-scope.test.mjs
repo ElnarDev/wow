@@ -17,3 +17,16 @@ test('A03 keeps a regional snapshot out of connected-realm freshness checks', as
   assert.match(source, /WHERE connected_realm_id=\$1 AND market_scope=\$2 AND status='succeeded'/);
   assert.match(source, /market_scope='connected' AND connected_realm_id=\$1\) OR market_scope='regional'/);
 });
+
+test('summary migration backfills the latest successful capture of every market', async () => {
+  const source = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
+  const migration = source.slice(
+    source.indexOf('INSERT INTO market_item_summaries'),
+    source.indexOf('const missingLevels'),
+  );
+  assert.match(migration, /WHERE p\.ingestion_run_id IN \(/);
+  assert.match(migration, /SELECT DISTINCT ON \(market_scope,connected_realm_id\) id FROM ingestion_runs/);
+  assert.match(migration, /WHERE status='succeeded' ORDER BY market_scope,connected_realm_id,started_at DESC/);
+  assert.match(migration, /NOT EXISTS \(SELECT 1 FROM market_item_summaries/);
+  assert.match(migration, /ON CONFLICT DO NOTHING/);
+});

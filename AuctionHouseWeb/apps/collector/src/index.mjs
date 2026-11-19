@@ -54,7 +54,10 @@ async function setupSchema() {
   await pool.query(`INSERT INTO market_item_summaries (ingestion_run_id,item_id,variant_id,effective_item_level,min_buyout_copper,quantity,listing_count)
     SELECT p.ingestion_run_id,v.item_id,(array_agg(v.id ORDER BY p.min_buyout_copper,v.id))[1],(array_agg(v.effective_item_level ORDER BY p.min_buyout_copper,v.id))[1],MIN(p.min_buyout_copper),SUM(p.quantity),SUM(p.listing_count)::INTEGER
     FROM variant_price_snapshots p JOIN auction_variants v ON v.id=p.variant_id
-    WHERE p.ingestion_run_id=(SELECT id FROM ingestion_runs WHERE status='succeeded' ORDER BY started_at DESC LIMIT 1)
+    WHERE p.ingestion_run_id IN (
+      SELECT DISTINCT ON (market_scope,connected_realm_id) id FROM ingestion_runs
+      WHERE status='succeeded' ORDER BY market_scope,connected_realm_id,started_at DESC
+    )
       AND NOT EXISTS (SELECT 1 FROM market_item_summaries s WHERE s.ingestion_run_id=p.ingestion_run_id AND s.item_id=v.item_id)
     GROUP BY p.ingestion_run_id,v.item_id ON CONFLICT DO NOTHING`);
   const missingLevels = await pool.query(`SELECT id,item_id AS "itemId",bonus_list_ids AS "bonusListIds",modifiers FROM auction_variants WHERE effective_item_level IS NULL`);

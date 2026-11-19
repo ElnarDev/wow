@@ -1419,6 +1419,26 @@ export function AuctionDashboard() {
     return { bought, cost, unit: bought ? Math.round(cost / bought) : 0 };
   }, [activeLevels, wantedQuantity]);
   const displayedItems = favoritesOpen ? favoriteItems : items;
+  const displayedCaptureDates = (
+    activeRoot === 'WoW Token'
+      ? wowToken?.latest ? [wowToken.latest.updatedAt] : []
+      : detail
+        ? [detail.capturedAt]
+        : displayedItems.map((item) => item.capturedAt)
+  ).sort();
+  const oldestCapture = displayedCaptureDates[0];
+  const newestCapture = displayedCaptureDates.at(-1);
+  const formatCaptureDate = (date: string) =>
+    new Date(date).toLocaleString(locale, { timeZoneName: 'short' });
+  const dataUpdatedText = oldestCapture && newestCapture
+    ? `${locale === 'es-MX' ? 'Datos mostrados actualizados' : 'Displayed data updated'}: ${
+        oldestCapture === newestCapture
+          ? formatCaptureDate(newestCapture)
+          : `${formatCaptureDate(oldestCapture)} – ${formatCaptureDate(newestCapture)}`
+      }`
+    : locale === 'es-MX'
+      ? 'Sin fecha de actualización: no hay datos mostrados.'
+      : 'No update date: no data displayed.';
   const isCollecting =
     collectorHealth?.status === 'collecting' ||
     collectorHealth?.status === 'starting';
@@ -1539,8 +1559,20 @@ export function AuctionDashboard() {
                 </div>
                 {detail && (
                   <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_330px]">
-                    <div className="min-h-0 overflow-y-auto p-4">
-                      <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-h-0 min-w-0 flex-col">
+                      <div className="wow-detail-header relative flex shrink-0 items-start justify-between gap-3 border-b border-[#413b36] bg-[#151211] p-4">
+                        <a
+                          aria-label={detail.name}
+                          href={wowheadHref(detail.id, detail.variants[0]?.bonusListIds ?? [], detail.variants[0]?.modifiers ?? [], detail.variants[0]?.effectiveItemLevel, locale)}
+                          data-wowhead={wowheadData(detail.id, detail.variants[0]?.bonusListIds ?? [], detail.variants[0]?.modifiers ?? [], detail.variants[0]?.effectiveItemLevel, locale)}
+                          data-wh-icon-size="large"
+                          onClick={(event) => event.preventDefault()}
+                          className="wow-detail-icon absolute left-4 top-4 block size-14 overflow-hidden rounded-full border-2 bg-[#111]"
+                          style={{
+                            borderColor: qualityColors[detail.qualityType ?? ''] ?? '#9d9d9d',
+                            boxShadow: `0 0 0 2px #090806, 0 0 14px ${qualityColors[detail.qualityType ?? ''] ?? '#9d9d9d'}`,
+                          }}
+                        />
                         <div className="min-w-0">
                           <h1
                             className="truncate font-serif text-xl"
@@ -1583,6 +1615,7 @@ export function AuctionDashboard() {
                           ★
                         </button>
                       </div>
+                      <div className="wow-detail-content min-h-0 flex-1 overflow-y-auto px-4 pb-4">
                       <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3">
                         <h2 className="font-serif text-[#e6ca68]">
                           {copy.baseStats}
@@ -1610,27 +1643,29 @@ export function AuctionDashboard() {
                         <h2 className="font-serif text-[#e6ca68]">
                           {copy.variants}
                         </h2>
-                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <ul className="wow-variant-list mt-2 flex flex-col gap-1">
                           {detail.variants.map((variant, index) => (
+                            <li key={variant.variantKey}>
                             <button
-                              key={variant.variantKey}
+                              aria-pressed={activeVariant?.variantKey === variant.variantKey}
                               onClick={() => {
                                 setSelectedVariant(variant.variantKey);
                                 setWantedQuantity(1);
                               }}
-                              className={`rounded border p-2 text-left text-xs ${activeVariant?.variantKey === variant.variantKey ? 'border-[#aaa4df] bg-[#4a456f]' : 'border-[#413b36] bg-[#181514] hover:bg-[#302b28]'}`}
+                              className={`flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded border p-2 text-left text-xs ${activeVariant?.variantKey === variant.variantKey ? 'border-[#aaa4df] bg-[#4a456f]' : 'border-[#413b36] bg-[#181514] hover:bg-[#302b28]'}`}
                             >
                               <b className="block text-[#f0d9a6]">
                                 {variantLabel(variant, index)}
                               </b>
-                              <span>
+                              <span className="flex flex-wrap items-center gap-1">
                                 {formatGold(variant.minBuyoutCopper)} ·{' '}
                                 {Number(variant.quantity).toLocaleString()}{' '}
                                 {copy.available.toLowerCase()}
                               </span>
                             </button>
+                            </li>
                           ))}
-                        </div>
+                        </ul>
                       </section>
                       <section className="mt-4 rounded border border-[#4d453f] bg-[#211d1b] p-3">
                         <h2 className="font-serif text-[#e6ca68]">
@@ -1769,6 +1804,7 @@ export function AuctionDashboard() {
                         </div>
                       </section>
                     </div>
+                    </div>
                     <aside className="min-h-0 overflow-y-auto border-l border-[#413b36] bg-[#181514]">
                       <div className="sticky top-0 grid grid-cols-[1fr_76px_62px] border-b border-[#504841] bg-[#2b2623] px-3 py-2 text-xs text-[#dac364]">
                         <span>{copy.unitPrice}</span>
@@ -1789,33 +1825,6 @@ export function AuctionDashboard() {
                       ))}
                     </aside>
                   </div>
-                )}
-                {detail && (
-                  <a
-                    aria-label={detail.name}
-                    href={wowheadHref(
-                      detail.id,
-                      detail.variants[0]?.bonusListIds ?? [],
-                      detail.variants[0]?.modifiers ?? [],
-                      detail.variants[0]?.effectiveItemLevel,
-                      locale,
-                    )}
-                    data-wowhead={wowheadData(
-                      detail.id,
-                      detail.variants[0]?.bonusListIds ?? [],
-                      detail.variants[0]?.modifiers ?? [],
-                      detail.variants[0]?.effectiveItemLevel,
-                      locale,
-                    )}
-                    data-wh-icon-size="large"
-                    onClick={(event) => event.preventDefault()}
-                    className="wow-detail-icon absolute left-5 top-[58px] z-20 block size-14 overflow-hidden rounded-full border-2 bg-[#111]"
-                    style={{
-                      borderColor:
-                        qualityColors[detail.qualityType ?? ''] ?? '#9d9d9d',
-                      boxShadow: `0 0 0 2px #090806, 0 0 14px ${qualityColors[detail.qualityType ?? ''] ?? '#9d9d9d'}`,
-                    }}
-                  />
                 )}
               </div>
             ) : (
@@ -1876,12 +1885,18 @@ export function AuctionDashboard() {
               : 'Loaded successfully'}
           </div>
         )}
-        <footer className="flex h-5 min-w-0 items-center gap-3 px-2 text-[#c9c2b9]">
+        <footer className="grid min-h-5 shrink-0 grid-cols-1 items-center gap-x-3 gap-y-1 px-2 text-[#c9c2b9] lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <p
+            role="status"
+            className="col-start-1 row-start-1 text-center text-[#b8ad98] lg:col-start-2"
+          >
+            {dataUpdatedText}
+          </p>
           {isCollecting && (
             <div
               role="status"
               aria-live="polite"
-              className="flex min-w-0 flex-1 items-center gap-1.5"
+              className="col-start-1 row-start-3 flex min-w-0 items-center gap-1.5 lg:col-span-3 lg:row-start-2"
             >
               <span className="inline-block size-2.5 shrink-0 animate-spin rounded-full border-2 border-[#d7bd3d] border-t-transparent" />
               <span className="shrink-0 text-[#cbc3b7]">
@@ -1910,7 +1925,7 @@ export function AuctionDashboard() {
               </span>
             </div>
           )}
-          <div className="ml-auto flex shrink-0 items-center gap-3">
+          <div className="col-start-1 row-start-2 flex flex-wrap items-center justify-center gap-3 lg:row-start-1 lg:justify-start">
             <select
               aria-label="Language"
               value={locale}

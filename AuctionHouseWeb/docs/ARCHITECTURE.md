@@ -14,6 +14,12 @@ Auction House Web se divide en tres procesos: una interfaz web, un collector HTT
 
 El componente de página coordina estado y casos de uso. Los componentes de presentación reciben datos y callbacks tipados; no construyen endpoints ni leen almacenamiento local directamente.
 
+En los resultados, `ItemIdentity` reserva un único espacio de 22 px para el icono. Wowhead aporta la imagen y el tooltip; CSS aplica al mismo icono el borde del color de calidad. Mientras no se haya insertado la imagen, un placeholder ocupa ese mismo espacio sin añadir un segundo icono.
+
+La ficha mantiene el icono, nombre, descripción y favorito en un encabezado fuera del área desplazable. Las estadísticas, variantes e historial se desplazan dentro de la columna principal; la lista de precios conserva su desplazamiento independiente.
+
+Las variantes se presentan en una lista de filas de ancho completo con nivel, precio y disponibilidad. Cada fila conserva la selección de variante y expone su estado mediante `aria-pressed`.
+
 ## Collector
 
 - `apps/collector/src/config.mjs`: configuración validada del entorno.

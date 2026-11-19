@@ -26,3 +26,11 @@ Con las dos variables válidas el colector sincroniza el catálogo US, resuelve 
 `docker compose down` detiene los servicios y conserva la base local. `docker compose down -v` elimina intencionalmente esos datos.
 
 Las dependencias del frontend se instalan desde Docker. No se requiere Node.js en Windows. La web arranca en modo de producción local para ejecutar el runtime compatible de Cloudflare de forma estable.
+
+## Actualizar el collector
+
+Tras cambiar o actualizar el código del collector, ejecuta `docker compose up -d --build --no-deps collector` desde `AuctionHouseWeb`. Reiniciar el contenedor sin reconstruirlo sigue ejecutando la imagen anterior.
+
+Al arrancar, el collector prepara los índices de búsqueda de la última captura exitosa de cada mercado sin borrar los datos existentes. Las búsquedas consideran tanto el nombre en inglés como el nombre en español ya indexado. La disponibilidad corresponde a la fecha de la captura, no necesariamente al estado actual del juego.
+
+El pie del dashboard muestra centrada la fecha y hora de actualización de los datos visibles, con la zona horaria del navegador. Si los resultados o favoritos mezclan capturas, muestra el intervalo entre la más antigua y la más reciente. La ficha de objeto y WoW Token muestran su propia fecha; sin datos visibles se indica que no hay fecha disponible. La fecha no cambia por una recolección en segundo plano hasta que se cargan los nuevos datos en la vista.
