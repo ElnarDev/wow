@@ -1,0 +1,5 @@
+C:\2026\wow\Latency\publish\Latency.exe
+C:\2026\wow\Latency\publish\Latency.dll
+C:\2026\wow\Latency\publish\Latency.deps.json
+C:\2026\wow\Latency\publish\Latency.runtimeconfig.json
+C:\2026\wow\Latency\publish\Latency.pdb

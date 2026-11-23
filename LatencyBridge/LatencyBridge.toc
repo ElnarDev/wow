@@ -1,0 +1,6 @@
+## Interface: 110205
+## Title: Latency Bridge
+## Notes: Writes current home and world latency for the desktop monitor
+## SavedVariables: LatencyBridgeDB
+
+Core.lua

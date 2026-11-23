@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "dgSpecHash": "bv69OfIaE/A=",
+  "success": true,
+  "projectFilePath": "C:\\2026\\wow\\Latency\\Latency.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\elnar.alvarez\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.34\\microsoft.netcore.app.runtime.win-x64.8.0.34.nupkg.sha512",
+    "C:\\Users\\elnar.alvarez\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.34\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.34.nupkg.sha512",
+    "C:\\Users\\elnar.alvarez\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.34\\microsoft.aspnetcore.app.runtime.win-x64.8.0.34.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1900",
+      "level": "Warning",
+      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://sda-iatec.pkgs.visualstudio.com/_packaging/AASI.net/nuget/v3/index.json.",
+      "projectPath": "C:\\2026\\wow\\Latency\\Latency.csproj",
+      "warningLevel": 1,
+      "filePath": "C:\\2026\\wow\\Latency\\Latency.csproj",
+      "targetGraphs": []
+    }
+  ]
+}

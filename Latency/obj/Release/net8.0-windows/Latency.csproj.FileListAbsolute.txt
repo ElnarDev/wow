@@ -1,0 +1,16 @@
+C:\2026\wow\Latency\bin\Release\net8.0-windows\Latency.exe
+C:\2026\wow\Latency\bin\Release\net8.0-windows\Latency.deps.json
+C:\2026\wow\Latency\bin\Release\net8.0-windows\Latency.runtimeconfig.json
+C:\2026\wow\Latency\bin\Release\net8.0-windows\Latency.dll
+C:\2026\wow\Latency\bin\Release\net8.0-windows\Latency.pdb
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.GeneratedMSBuildEditorConfig.editorconfig
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.AssemblyInfoInputs.cache
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.AssemblyInfo.cs
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.csproj.CoreCompileInputs.cache
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.sourcelink.json
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.dll
+C:\2026\wow\Latency\obj\Release\net8.0-windows\refint\Latency.dll
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.pdb
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.genruntimeconfig.cache
+C:\2026\wow\Latency\obj\Release\net8.0-windows\ref\Latency.dll
+C:\2026\wow\Latency\obj\Release\net8.0-windows\Latency.csproj.Up2Date
